@@ -1,10 +1,10 @@
 name: Generate and Send Post to Telegram
 
 on:
-  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+  workflow_dispatch:
 
 permissions:
-  contents: write # Grants permission to commit and push changes back to the repository
+  contents: write
 
 jobs:
   post:
@@ -18,26 +18,25 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip' # caches pip dependencies for faster runs
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r telegram_poster/requirements.txt
+          pip install -r requirements.txt
 
       - name: Run poster script
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python telegram_poster/generate_and_send.py
+          python generate_and_send.py
 
       - name: Commit and push changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add telegram_poster/posts.csv
-          # Only commit and push if there are changes (i.e. a post was processed and marked as Done)
+          git add posts.csv
           if git diff --staged --quiet; then
             echo "No changes in posts.csv to commit."
           else
