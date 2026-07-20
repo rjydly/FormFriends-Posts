@@ -243,8 +243,8 @@ def main():
                 crop_box = (0, 0, width_orig, int(height_orig * 0.69))
                 mockup_img = mockup_img.crop(crop_box)
                 
-                # Scale the cropped image to fit beautifully (720px height)
-                max_mockup_height = 720
+                # Scale the cropped image to fit beautifully (Increased to 790px height)
+                max_mockup_height = 790
                 w_percent = (max_mockup_height / float(mockup_img.size[1]))
                 max_mockup_width = int((float(mockup_img.size[0]) * float(w_percent)))
                 mockup_img = mockup_img.resize((max_mockup_width, max_mockup_height), Image.Resampling.LANCZOS)
