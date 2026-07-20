@@ -106,7 +106,21 @@ def main():
     ]
     bg_color = random.choice(dark_backgrounds)
 
-    # We now have 7 slides: Title, 5 Questions, and 1 CTA
+    # List of CTAs to cycle through randomly (No emojis)
+    cta_pool = [
+        "Find out who knows you best. Link in bio",
+        "Get your custom story link and let your friends vote. Link in bio",
+        "Discover your group's unfiltered opinions. Link in bio",
+        "Put your friendship to the test. Link in bio",
+        "Let your friends drop their honest takes on your story. Link in bio",
+        "Ready to see what they really think? Link in bio",
+        "See who in your chat is the most chaotic. Link in bio",
+        "Start your own interactive friend game. Link in bio",
+        "Get custom polls for your group. Link in bio",
+        "Let your friends decide. Link in bio"
+    ]
+    selected_cta = random.choice(cta_pool)
+
     slides = [
         {"type": "title", "text": post_data.get('Slide_1_Title', '')},
         {"type": "question", "text": post_data.get('Slide_2_Question', '')},
@@ -114,7 +128,7 @@ def main():
         {"type": "question", "text": post_data.get('Slide_4_Question', '')},
         {"type": "question", "text": post_data.get('Slide_5_Question', '')},
         {"type": "question", "text": post_data.get('Slide_6_Question', '')},
-        {"type": "cta", "text": "Ask your friends lots of more questions in the link in bio"}
+        {"type": "cta", "text": selected_cta}
     ]
 
     # Load Poppins fonts
@@ -126,7 +140,7 @@ def main():
         font_title = ImageFont.load_default()
         font_text = ImageFont.load_default()
 
-    # Load Logo (Not used on CTA, but loaded for normal slides)
+    # Load Logo
     logo_img = None
     if os.path.exists(LOGO_PATH):
         try:
@@ -161,7 +175,7 @@ def main():
         img = Image.alpha_composite(bg, card_layer).convert('RGB')
         draw = ImageDraw.Draw(img)
 
-        # Progress bar (only for question slides, index 1 to 5)
+        # Progress bar (only on questions, slides index 1 to 5)
         if i > 0 and slide["type"] == "question":
             pb_x_start = card_margin + 60
             pb_x_end = width - card_margin - 60
@@ -189,7 +203,6 @@ def main():
                 )
 
         # Text wrapping and rendering
-        # For CTA slide, we use the title font to make it stand out
         current_font = font_title if slide["type"] in ["title", "cta"] else font_text
         max_text_width = width - (card_margin * 4)
         wrapped_lines = wrap_text(slide["text"], draw, current_font, max_text_width)
@@ -200,7 +213,7 @@ def main():
             line_heights.append(bbox[3] - bbox[1])
         total_text_height = sum(line_heights) + (20 * (len(wrapped_lines) - 1))
 
-        # Position text differently if it's the CTA slide (pushed to the top to leave room for the mockup)
+        # Push the text to the top on the CTA slide to clear space for the phone mockup
         if slide["type"] == "cta":
             current_y = card_margin + 60
         else:
@@ -223,17 +236,25 @@ def main():
         if slide["type"] == "cta" and os.path.exists(MOCKUP_PATH):
             try:
                 mockup_img = Image.open(MOCKUP_PATH).convert('RGBA')
-                max_mockup_height = 680 # Height to fit beautifully under the text
+                
+                # Crop mockup to show only the top 69% of the height
+                # This crops out Safari search bar, navigation bar, and cable/background
+                width_orig, height_orig = mockup_img.size
+                crop_box = (0, 0, width_orig, int(height_orig * 0.69))
+                mockup_img = mockup_img.crop(crop_box)
+                
+                # Scale the cropped image to fit beautifully (720px height)
+                max_mockup_height = 720
                 w_percent = (max_mockup_height / float(mockup_img.size[1]))
                 max_mockup_width = int((float(mockup_img.size[0]) * float(w_percent)))
                 mockup_img = mockup_img.resize((max_mockup_width, max_mockup_height), Image.Resampling.LANCZOS)
                 
+                # Center horizontally and sit perfectly flush at the bottom
                 mockup_x = int((width - mockup_img.size[0]) / 2)
                 mockup_y = height - mockup_img.size[1]
                 
-                # Paste utilizing its transparency layer as a mask
                 img.paste(mockup_img, (mockup_x, mockup_y), mockup_img)
-                print("Pasted phone mockup onto the CTA slide.")
+                print("Pasted cropped phone mockup onto the CTA slide.")
             except Exception as e:
                 print(f"⚠️ Error processing mockup.png on CTA slide: {e}")
         elif slide["type"] == "cta":
@@ -303,7 +324,6 @@ def main():
                 print("✅ Successfully sent post to Telegram!")
             else:
                 print(f"❌ Failed to send to Telegram: Code {response.status_code}, Response: {response.text}")
-                # Don't update CSV status to Done if sending failed
                 return
         except Exception as e:
             for f_handle in opened_files:
