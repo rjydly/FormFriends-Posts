@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(BASE_DIR, 'posts.csv')
 LOGO_PATH = os.path.join(BASE_DIR, 'logo.png')
+MOCKUP_PATH = os.path.join(BASE_DIR, 'mockup.png')
 FONT_BOLD_PATH = os.path.join(BASE_DIR, 'Poppins-Bold.ttf')
 FONT_REG_PATH = os.path.join(BASE_DIR, 'Poppins-Regular.ttf')
 
@@ -105,13 +106,15 @@ def main():
     ]
     bg_color = random.choice(dark_backgrounds)
 
+    # We now have 7 slides: Title, 5 Questions, and 1 CTA
     slides = [
         {"type": "title", "text": post_data.get('Slide_1_Title', '')},
         {"type": "question", "text": post_data.get('Slide_2_Question', '')},
         {"type": "question", "text": post_data.get('Slide_3_Question', '')},
         {"type": "question", "text": post_data.get('Slide_4_Question', '')},
         {"type": "question", "text": post_data.get('Slide_5_Question', '')},
-        {"type": "question", "text": post_data.get('Slide_6_Question', '')}
+        {"type": "question", "text": post_data.get('Slide_6_Question', '')},
+        {"type": "cta", "text": "Ask your friends lots of more questions in the link in bio"}
     ]
 
     # Load Poppins fonts
@@ -123,7 +126,7 @@ def main():
         font_title = ImageFont.load_default()
         font_text = ImageFont.load_default()
 
-    # Load Logo
+    # Load Logo (Not used on CTA, but loaded for normal slides)
     logo_img = None
     if os.path.exists(LOGO_PATH):
         try:
@@ -140,7 +143,7 @@ def main():
 
     temp_files = []
 
-    # 5. Create the 6 slides
+    # 5. Create the 7 slides
     for i, slide in enumerate(slides):
         bg = Image.new('RGBA', (width, height), color=bg_color)
         card_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -158,8 +161,8 @@ def main():
         img = Image.alpha_composite(bg, card_layer).convert('RGB')
         draw = ImageDraw.Draw(img)
 
-        # Progress bar
-        if i > 0:
+        # Progress bar (only for question slides, index 1 to 5)
+        if i > 0 and slide["type"] == "question":
             pb_x_start = card_margin + 60
             pb_x_end = width - card_margin - 60
             pb_y = card_margin + 60
@@ -186,7 +189,8 @@ def main():
                 )
 
         # Text wrapping and rendering
-        current_font = font_title if slide["type"] == "title" else font_text
+        # For CTA slide, we use the title font to make it stand out
+        current_font = font_title if slide["type"] in ["title", "cta"] else font_text
         max_text_width = width - (card_margin * 4)
         wrapped_lines = wrap_text(slide["text"], draw, current_font, max_text_width)
 
@@ -196,7 +200,11 @@ def main():
             line_heights.append(bbox[3] - bbox[1])
         total_text_height = sum(line_heights) + (20 * (len(wrapped_lines) - 1))
 
-        current_y = (height - total_text_height) / 2
+        # Position text differently if it's the CTA slide (pushed to the top to leave room for the mockup)
+        if slide["type"] == "cta":
+            current_y = card_margin + 60
+        else:
+            current_y = (height - total_text_height) / 2
 
         for idx_line, line in enumerate(wrapped_lines):
             bbox = draw.textbbox((0, 0), line, font=current_font)
@@ -205,17 +213,37 @@ def main():
             draw.text((current_x, current_y), line, fill='#FFFFFF', font=current_font)
             current_y += (bbox[3] - bbox[1]) + 20
 
-        # Paste logo
-        if logo_img:
+        # Paste logo (only on non-CTA slides)
+        if logo_img and slide["type"] != "cta":
             logo_x = int((width - logo_img.size[0]) / 2)
             logo_y = height - 235
             img.paste(logo_img, (logo_x, logo_y), logo_img)
+
+        # Paste Phone Mockup (only on CTA slide)
+        if slide["type"] == "cta" and os.path.exists(MOCKUP_PATH):
+            try:
+                mockup_img = Image.open(MOCKUP_PATH).convert('RGBA')
+                max_mockup_height = 680 # Height to fit beautifully under the text
+                w_percent = (max_mockup_height / float(mockup_img.size[1]))
+                max_mockup_width = int((float(mockup_img.size[0]) * float(w_percent)))
+                mockup_img = mockup_img.resize((max_mockup_width, max_mockup_height), Image.Resampling.LANCZOS)
+                
+                mockup_x = int((width - mockup_img.size[0]) / 2)
+                mockup_y = height - mockup_img.size[1]
+                
+                # Paste utilizing its transparency layer as a mask
+                img.paste(mockup_img, (mockup_x, mockup_y), mockup_img)
+                print("Pasted phone mockup onto the CTA slide.")
+            except Exception as e:
+                print(f"⚠️ Error processing mockup.png on CTA slide: {e}")
+        elif slide["type"] == "cta":
+            print("⚠️ Warning: mockup.png not found. Generating CTA slide without phone mockup.")
 
         file_name = os.path.join(BASE_DIR, f"{post_id}_slide_{i+1}.png")
         img.save(file_name, "PNG")
         temp_files.append(file_name)
 
-    print("Generated 6 slide images.")
+    print("Generated 7 slide images.")
 
     # 6. Generate Instagram Caption
     hashtag_pool = ['#friendforms', '#socialexperiment', '#perspective', '#humanconnection', '#mindset', '#deepconversations', '#socialgame', '#connection']
