@@ -63,29 +63,28 @@ def send_telegram_notification(message, photo_path=None):
         print(f"⚠️ Error enviant notificació a Telegram: {e}")
 
 def upload_image_to_temp_host(file_path):
-    """Puja una imatge a Catbox per obtenir una URL pública directa i sense bloquejos d'anti-bot"""
+    """Puja una imatge a Imgur CDN (oficialment recomanat per Buffer, 100% accessible)"""
+    # Intent 1: Imgur API
     try:
-        url = "https://catbox.moe/user/api.php"
-        data = {"reqtype": "fileupload"}
+        headers = {'Authorization': 'Client-ID 54477631566e84e'}
         with open(file_path, 'rb') as f:
-            resp = requests.post(url, data=data, files={'fileToUpload': f}, timeout=15)
-        if resp.status_code == 200 and resp.text.startswith("https://"):
-            return resp.text.strip()
+            resp = requests.post("https://api.imgur.com/3/image", headers=headers, files={'image': f}, timeout=20)
+        if resp.status_code == 200 and resp.json().get('success'):
+            return resp.json()['data']['link']
     except Exception as e:
-        print(f"⚠️ Error pujant a Catbox: {e}")
+        print(f"⚠️ Error pujant a Imgur: {e}")
 
-    # Fallback temporal si falla Catbox
+    # Intent 2: FreeImage.host API (Fallback)
     try:
-        url = "https://tmpfiles.org/api/v1/upload"
+        url = "https://freeimage.host/api/1/upload?key=6d207e6014306d15be12a40f4e74d228&action=upload&format=json"
         with open(file_path, 'rb') as f:
-            resp = requests.post(url, files={'file': f}, timeout=15)
-        if resp.status_code == 200:
-            raw_url = resp.json()['data']['url']
-            return raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+            resp = requests.post(url, files={'source': f}, timeout=20)
+        if resp.status_code == 200 and resp.json().get('status_code') == 200:
+            return resp.json()['image']['url']
     except Exception as e:
-        print(f"⚠️ Error pujant a tmpfiles: {e}")
+        print(f"⚠️ Error pujant a FreeImage: {e}")
 
-    raise Exception("No s'ha pogut pujar la imatge a cap servidor temporal.")
+    raise Exception("No s'ha pogut pujar la imatge a cap servidor de mitjans.")
 
 def post_to_buffer(token, image_urls, caption):
     """Envia el carrousel a tots els canals utilitzant la GraphQL API de Buffer"""
@@ -150,7 +149,7 @@ def post_to_buffer(token, image_urls, caption):
         print("❌ No s'han trobat canals connectats a Buffer.")
         return False
 
-    print(f"📡 Canals trobats a Buffer ({len(channels)}): {[c.get('displayName') or c.get('name') or c.get('service') for c in channels]}")
+    print(f"📡 Canals trobats a Buffer ({len(channels)}): {[f'{c.get('displayName') or c.get('name')} ({c.get('service')})' for c in channels]}")
 
     # Preparem la llista d'assets d'imatges per al carrousel
     assets = [{"image": {"url": url}} for url in image_urls]
@@ -168,6 +167,12 @@ def post_to_buffer(token, image_urls, caption):
         ... on MutationError {
           message
         }
+        ... on InvalidInputError {
+          message
+        }
+        ... on UnauthorizedError {
+          message
+        }
       }
     }
     """
@@ -176,6 +181,7 @@ def post_to_buffer(token, image_urls, caption):
     for channel in channels:
         channel_id = channel["id"]
         service_name = str(channel.get("service", "")).lower()
+        channel_display_name = channel.get('displayName') or channel.get('name') or channel_id
 
         channel_input = {
             "channelId": channel_id,
@@ -185,10 +191,16 @@ def post_to_buffer(token, image_urls, caption):
             "assets": assets
         }
 
-        # Instagram requereix obligatòriament metadata.instagram.type = "post"
+        # Instagram i TikTok requereixen obligatòriament metadata.{service}.type = "post"
         if "instagram" in service_name:
             channel_input["metadata"] = {
                 "instagram": {
+                    "type": "post"
+                }
+            }
+        elif "tiktok" in service_name:
+            channel_input["metadata"] = {
+                "tiktok": {
                     "type": "post"
                 }
             }
@@ -199,15 +211,20 @@ def post_to_buffer(token, image_urls, caption):
 
         post_resp = requests.post(buffer_url, headers=headers, json={"query": mutation, "variables": variables})
         if post_resp.status_code == 200:
-            post_data = post_resp.json().get("data", {}).get("createPost", {})
-            if "post" in post_data:
-                print(f"✅ Carrousel publicat amb èxit al canal {channel.get('displayName') or channel.get('name', channel_id)}!")
-            else:
-                error_msg = post_data.get("message", "Error desconegut")
-                print(f"❌ Error al canal {channel.get('name', channel_id)}: {error_msg}")
+            res_payload = post_resp.json()
+            if "errors" in res_payload:
+                print(f"❌ Error al canal {channel_display_name} ({service_name}): {res_payload['errors']}")
                 all_success = False
+            else:
+                post_data = res_payload.get("data", {}).get("createPost", {})
+                if "post" in post_data:
+                    print(f"✅ Carrousel publicat amb èxit al canal {channel_display_name} ({service_name})!")
+                else:
+                    error_msg = post_data.get("message", "Error desconegut")
+                    print(f"❌ Error al canal {channel_display_name} ({service_name}): {error_msg}")
+                    all_success = False
         else:
-            print(f"❌ Error HTTP al canal {channel_id}: {post_resp.text}")
+            print(f"❌ Error HTTP al canal {channel_display_name}: {post_resp.text}")
             all_success = False
 
     return all_success
@@ -386,7 +403,7 @@ def main():
         print("⚠️ Warning: BUFFER_ACCESS_TOKEN no està configurat als Secrets de GitHub.")
         return
 
-    print("☁️ Pujant imatges a servidor temporal (Catbox) per generar URLs públiques accesibles...")
+    print("☁️ Pujant imatges a Imgur CDN per generar URLs 100% compatibles amb Buffer...")
     public_urls = []
     for f_path in temp_files:
         p_url = upload_image_to_temp_host(f_path)
