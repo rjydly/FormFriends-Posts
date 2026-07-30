@@ -450,24 +450,24 @@ def main():
             logo_y = height - 235
             img.paste(logo_img, (logo_x, logo_y), logo_img)
 
-        # Enganxar el Mockup gran, ample i cap avall (només fins a Spicy Questions / Ultimate Roast)
+        # Enganxar el Mockup (una mica més gran, un xic més amunt i mostrant Spicy/Roast)
         if slide["type"] == "cta" and mockup_path:
             try:
                 mockup_img = Image.open(mockup_path).convert('RGBA')
                 w_orig, h_orig = mockup_img.size
                 
-                # 1. Retallem al 50% superior de la imatge per tallar 'Politics' i 'Food' (deixant només Spicy/Roast)
-                mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.49)))
+                # 1. Retallem al 62% per mostrar Spicy Questions i Ultimate Roast senceres
+                mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.62)))
                 
-                # 2. Reescalem per amplada a 580px per fer el mòbil MOLT MÉS GRAN I AMPLE
-                target_width = 580
+                # 2. Reescalem per amplada a 650px (una mica més gran)
+                target_width = 650
                 w_percent = (target_width / float(mockup_img.size[0]))
                 target_height = int((float(mockup_img.size[1]) * float(w_percent)))
                 mockup_img = mockup_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
                 
-                # 3. Centrem i tirem cap avall flush arran de la part inferior de la imatge
+                # 3. Posicionem un xic més amunt per reduir el buit central
                 mockup_x = int((width - target_width) / 2)
-                mockup_y = height - target_height
+                mockup_y = 330
                 
                 img.paste(mockup_img, (mockup_x, mockup_y), mockup_img)
                 print(f"Pasted cropped mockup ({os.path.basename(mockup_path)}) onto CTA slide.")
