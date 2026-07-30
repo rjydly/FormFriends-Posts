@@ -1,0 +1,205 @@
+===============================================================================
+               ESPECIFICACIÓ TÈCNICA I DOCUMENTACIÓ DEL PROJECTE
+                        FormFriends Social Media Bot
+===============================================================================
+Data d'última actualització: Juliol 2026
+Versió de l'Script: 2.5 (Buffer GraphQL API + GitHub Raw CDN + Telegram HTML)
+Estat del Sistema: Producció / Actiu
+Repositori: https://github.com/rjydly/FormFriends-Posts (PÚBLIC)
+
+-------------------------------------------------------------------------------
+1. RESUM I PROPÒSIT DEL PROJECTE
+-------------------------------------------------------------------------------
+El projecte "FormFriends-Posts" és un sistema d'automatització d'extrem a extrem 
+(End-to-End Automated Content Pipeline) dissenyat per generar carrousels gràfics 
+personalitzats de 7 diapositives i publicar-los automàticament a INSTAGRAM i TIKTOK 
+de manera simultània a través de la GraphQL API de Buffer.
+
+A més, el sistema gestiona l'estat del contingut en un fitxer CSV local, realitza 
+commits automàtics a GitHub i envia notificacions de confirmació en format HTML 
+a un canal/grup privat de Telegram amb la imatge de portada adjunta.
+
+-------------------------------------------------------------------------------
+2. ESTRUCTURA DELS FITXERS DEL REPOSITORI
+-------------------------------------------------------------------------------
+/ (Arrel del Repositori)
+├── .github/
+│   └── workflows/
+│       └── post_workflow.yml   # Workflow d'execució automàtica de GitHub Actions
+├── public_slides/              # Directori on es desen i serveixen les imatges (.jpg)
+├── generate_and_send.py        # Script principal en Python 3.10
+├── posts.csv                   # Base de dades local en format CSV (100 publicacions)
+├── logo.png                    # Isotip/Logo de la marca (format RGBA)
+├── mockup.png                  # Maqueta de telèfon mòbil per a la slide CTA
+├── Poppins-Bold.ttf            # Font tipogràfica (es descarrega automàticament)
+├── Poppins-Regular.ttf         # Font tipogràfica (es descarrega automàticament)
+└── requirements.txt            # Dependències de Python (pillow, requests)
+
+-------------------------------------------------------------------------------
+3. ARQUITECTURA I FLUX D'EXECUCIÓ (STEP-BY-STEP PIPELINE)
+-------------------------------------------------------------------------------
+Cada execució del workflow (`python generate_and_send.py`) segueix rigorosament 
+el següent flux lineal:
+
+[Passor 1: Gestió de Fonts i Lectura de Dades]
+ - Es comprova la presència de les fonts Poppins-Bold i Poppins-Regular; si no hi són, 
+   es descarreguen des del repositori oficial de Google Fonts a GitHub.
+ - Es llegeix `posts.csv`. El script cerca la PRIMERA línia on la columna 'Status' 
+   SIGUI DIFERENT de 'Done' (case-insensitive).
+ - S'extreuen el Post_ID, Slide_1_Title i les preguntes de la Slide_2 a la Slide_6.
+
+[Passor 2: Generació Gràfica amb Pillow (PIL)]
+ - Es creen 7 diapositives quadrades (1080 x 1080 píxels).
+ - Es tria un fons fosc aleatori d'una paleta predefinida (Hex: #101520, #161F2B, etc.).
+ - S'hi dibuixa una targeta central blanca translúcida (RGBA: 255, 255, 255, 25) 
+   amb cantonades arrodonides (radius=40).
+ - Diapositives 2 a 6 (Preguntes): Dibuixa una barra de progrés superior personalitzada.
+ - Diapositiva 7 (Call to Action / CTA): Selecciona una CTA aleatòria, empeny el text 
+   a la part superior i enganxa el 'mockup.png' (retallat al 69% superior per eliminar 
+   la barra de navegació de Safari i alineat arran de la part inferior).
+ - FORMAT D'EXPORTACIÓ: Les imatges es desaven OBLIGATÒRIAMENT en format JPEG (.jpg) 
+   amb una qualitat del 95% a la carpeta `public_slides/`.
+
+[Passor 3: Publicació de Mitjans a GitHub Raw CDN]
+ - Perquè Buffer i Instagram puguin llegir les imatges, aquestes han d'estar en 
+   URLs HTTPS públiques, estables i amb capçalera 'Content-Type: image/jpeg'.
+ - L'script executa comandos de Git internament (`git add`, `git commit`, `git push`) 
+   per pujar les imatges generades a la carpeta `public_slides/` del repositori.
+ - Es construeixen les URLs públiques directes mitjançant la CDN oficial de GitHub:
+   `https://raw.githubusercontent.com/{owner}/{repo}/{branch}/public_slides/{filename}`
+
+[Passor 4: Publicació Simultània via Buffer GraphQL API]
+ - Es realitzen consultes GraphQL a l'endpoint `https://api.buffer.com`.
+ - S'obtenen les organitzacions i canals connectats a Buffer (Instagram i TikTok).
+ - S'envia la mutation `createPost` per a cada canal.
+ - S'apliquen metadades específiques segons la xarxa social (veure secció 5).
+
+[Passor 5: Notificació per Telegram i Actualització de l'Estat]
+ - Si la publicació a Buffer té èxit, s'envia una petició a l'API de Telegram 
+   (`sendPhoto`) amb la imatge de portada (`Post_X_slide_1.jpg`) i un missatge en HTML.
+ - Es modifica la columna 'Status' de la fila processada a 'Done' a `posts.csv`.
+ - GitHub Actions fa el commit final del `posts.csv` actualitzat al repositori.
+
+-------------------------------------------------------------------------------
+4. ESPECIFICACIÓ TÈCNICA DE GENERACIÓ D'IMATGES (Pillow)
+-------------------------------------------------------------------------------
+- Mides: 1080 x 1080 px (Relació d'aspecte 1:1, estàndard per a carrousels).
+- Ajust de Text: Funció `wrap_text()` calcula l'amplada dels caràcters fent servir 
+  `draw.textbbox()` per tallar línies de forma neta sense partir paraules.
+- Format de Sortida: **JPEG / .jpg (Quality=95)**.
+  CRUCIAL: Meta Graph API (Instagram Direct Publishing) REBUTJA o descarta carrousels 
+  si els fitxers tenen extensió .png o capçaleres MIME de PNG. L'ús de JPEG és 
+  un requisit estricte del pipeline d'Instagram.
+
+-------------------------------------------------------------------------------
+5. INTEGRACIÓ AMB BUFFER GRAPHQL API (APIs & METADATA RULES)
+-------------------------------------------------------------------------------
+Endpoint oficial: `https://api.buffer.com`
+Autenticació: Header `Authorization: Bearer <BUFFER_ACCESS_TOKEN>`
+
+1. Obtenir Organització:
+   Query: `query GetOrganizations { account { organizations { id name } } }`
+
+2. Obtenir Canals de la Organització:
+   Query: `query GetChannels($input: ChannelsInput!) { channels(input: $input) { id name displayName service } }`
+   Variables: `{"input": {"organizationId": "<org_id>"}}`
+
+3. Crear la Publicació (Mutation CreatePost):
+   Mutation: `mutation CreatePost($input: CreatePostInput!) { createPost(input: $input) { ... on PostActionSuccess { post { id text } } ... on MutationError { message } } }`
+
+   REGLES STRICTES DE METADADES SEGOND EL CANAL:
+   - Per a Instagram (`service` conté "instagram"):
+     S'HA D'INCLOURE OBLIGATÒRIAMENT el camp `shouldShareToFeed`:
+     ```json
+     "metadata": {
+       "instagram": {
+         "type": "post",
+         "shouldShareToFeed": true
+       }
+     }
+     ```
+   - Per a TikTok (`service` conté "tiktok"):
+     NO S'HA D'INCLOURE el camp `type` a les metadades (l'esquema GraphQL 
+     `TikTokPostMetadataInput` no defineix el camp `type` i la petició fallarà 
+     amb un error `INTERNAL_SERVER_ERROR` si s'envia). Es deixa sense `metadata`.
+
+-------------------------------------------------------------------------------
+6. SISTEMA D'ALLOTJAMENT D'IMATGES (GitHub Raw CDN & Fallbacks)
+-------------------------------------------------------------------------------
+Perquè Buffer/Instagram descarreguin les imatges, les URLs han de respondre 
+amb HTTP 200 OK a peticions `HEAD` i `GET` sense desafiaments anti-bot (Cloudflare).
+
+Estratègia de Servidors:
+1. Primary Host: **GitHub Raw CDN** (`raw.githubusercontent.com`)
+   - REQUISIT CRÍTIC: El repositori de GitHub (`rjydly/FormFriends-Posts`) HA DE SER PÚBLIC. 
+     Si el repositori és privat, GitHub retorna HTTP 404 Not Found a peticions no 
+     autenticades i Buffer no pot llegir els mitjans (`Image could not be read from its URL`).
+2. Fallback 1: **FTP Server** (`upload_via_ftp`)
+   - Si les variables d'entorn `FTP_HOST`, `FTP_USER`, `FTP_PASS` estan definides, 
+     l'script puja les imatges directament al servidor web de `formfriends.com` 
+     a la carpeta `public_slides/`.
+3. Fallback 2: **ImgBB API** (`upload_to_imgbb`)
+   - Utilitza la clau d'API privada `IMGBB_API_KEY` fent POST a `https://api.imgbb.com/1/upload`.
+
+-------------------------------------------------------------------------------
+7. NOTIFICACIONS A TELEGRAM (HTML Formatting)
+-------------------------------------------------------------------------------
+Endpoint: `https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/sendPhoto`
+Paràmetres:
+ - `chat_id`: `TELEGRAM_CHAT_ID`
+ - `parse_mode`: `'HTML'`
+ - `caption`: Text estructurat en HTML (`<b>`, `<i>`, `&amp;`)
+ - `photo`: Imatge de portada del carrousel (`Post_X_slide_1.jpg`)
+
+Plantilla del missatge:
+🚀 <b>{post_id} publicat amb èxit!</b>
+
+📱 <b>Destí:</b> Instagram &amp; TikTok
+📖 <b>Portada:</b> {title_text}
+🏷️ <b>Hashtags:</b> {tags_string}
+
+-------------------------------------------------------------------------------
+8. CONFIGURACIÓ DE GITHUB ACTIONS (`post_workflow.yml`)
+-------------------------------------------------------------------------------
+Triggers d'execució:
+1. `workflow_dispatch`: Permet l'execució manual mitjançant el botó "Run workflow".
+2. `schedule` (Cron): Execució automàtica 3 vegades al dia:
+   - `0 8 * * *`   (08:00 UTC)
+   - `0 14 * * *`  (14:00 UTC)
+   - `0 20 * * *`  (20:00 UTC)
+
+Permisos del Workflow:
+`permissions: contents: write` (Requisit per fer `git push` del CSV i de les slides).
+
+Variables d'entorn (Secrets requerits a GitHub Secrets):
+- `BUFFER_ACCESS_TOKEN`: Token d'accés GraphQL de Buffer (Obtingut a Settings > API).
+- `TELEGRAM_BOT_TOKEN`: HTTP API Token de BotFather.
+- `TELEGRAM_CHAT_ID`: ID del xat/canal de Telegram.
+- `IMGBB_API_KEY`: (Opcional) Clau d'API personal d'ImgBB.
+- `FTP_HOST`, `FTP_USER`, `FTP_PASS`: (Opcional) Credencials d'FTP per a formfriends.com.
+
+-------------------------------------------------------------------------------
+9. GUIA DE DISSOLUCIÓ DE PROBLEMES (TROUBLESHOOTING PER A IAS)
+-------------------------------------------------------------------------------
+- Error: "Image could not be read from its URL" a Buffer.
+  Causa: El repositori és Privat i les URLs de GitHub Raw tornen 404, O bé el 
+  servidor d'imatges té protecció anti-bot.
+  Solució: Assegurar-se que el repositori sigui PÚBLIC o activar la pujada FTP.
+
+- Error: "Field 'shouldShareToFeed' of required type 'Boolean!' was not provided".
+  Causa: S'ha intentat publicar a Instagram sense la metadada obligatòria.
+  Solució: Incloure `metadata.instagram = {"type": "post", "shouldShareToFeed": True}`.
+
+- Error: "Field 'type' is not defined by type 'TikTokPostMetadataInput'".
+  Causa: S'ha passat `"type": "post"` al canal de TikTok.
+  Solució: No enviar el camp `type` a TikTok (omitir `metadata` o enviar-lo buit).
+
+- Error: "Public API tokens are not accepted for REST API access".
+  Causa: Intent d'usar l'API REST antiga (`api.bufferapp.com`).
+  Solució: Usar l'endpoint GraphQL oficial (`https://api.buffer.com`).
+
+- Error: Els carrousels es publiquen a TikTok però no a Instagram.
+  Causa: Format d'imatge PNG o canal d'Instagram configurat com a "Reminders" a Buffer.
+  Solució: Assegurar-se que l'script exporti en format `.jpg` (JPEG) i que el canal 
+  d'Instagram a Buffer tingui activada la "Direct Publishing".
+===============================================================================
