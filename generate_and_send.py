@@ -13,7 +13,6 @@ from PIL import Image, ImageDraw, ImageFont
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(BASE_DIR, 'posts.csv')
 LOGO_PATH = os.path.join(BASE_DIR, 'logo.png')
-MOCKUP_PATH = os.path.join(BASE_DIR, 'mockup.png')
 SLIDES_DIR = os.path.join(BASE_DIR, 'public_slides')
 FONT_BOLD_PATH = os.path.join(BASE_DIR, 'Poppins-Bold.ttf')
 FONT_REG_PATH = os.path.join(BASE_DIR, 'Poppins-Regular.ttf')
@@ -29,6 +28,19 @@ IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
 FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
+
+def find_file_case_insensitive(filename):
+    """Cerca un fitxer a BASE_DIR independentment de majúscules o extensió (.png, .PNG, .jpg, .JPG)"""
+    base_name, _ = os.path.splitext(filename)
+    possible_extensions = ['.png', '.PNG', '.jpg', '.JPG', '.jpeg', '.JPEG']
+    for ext in possible_extensions:
+        path = os.path.join(BASE_DIR, base_name + ext)
+        if os.path.exists(path):
+            return path
+        path_cap = os.path.join(BASE_DIR, base_name.capitalize() + ext)
+        if os.path.exists(path_cap):
+            return path_cap
+    return None
 
 def download_font(url, save_path):
     if not os.path.exists(save_path):
@@ -82,7 +94,6 @@ def send_telegram_notification(message, photo_path=None):
         print(f"⚠️ Error enviant notificació a Telegram: {e}")
 
 def upload_via_ftp(file_path):
-    """Puja la imatge al servidor web de formfriends.com via FTP"""
     if not (FTP_HOST and FTP_USER and FTP_PASS):
         return None
 
@@ -112,7 +123,6 @@ def upload_via_ftp(file_path):
         return None
 
 def upload_to_imgbb(file_path):
-    """Puja una imatge a ImgBB si tenim la clau"""
     if not IMGBB_API_KEY:
         return None
 
@@ -129,8 +139,6 @@ def upload_to_imgbb(file_path):
     return None
 
 def get_public_image_urls(temp_files):
-    """Estratègia de generació de URLs públiques"""
-    # 1. Provar FTP (formfriends.com)
     if FTP_HOST and FTP_USER and FTP_PASS:
         print("🌐 Pujant imatges al teu propi servidor web (formfriends.com) via FTP...")
         ftp_urls = []
@@ -141,7 +149,6 @@ def get_public_image_urls(temp_files):
         if len(ftp_urls) == len(temp_files):
             return ftp_urls
 
-    # 2. Provar ImgBB
     if IMGBB_API_KEY:
         print("☁️ Pujant imatges a ImgBB...")
         imgbb_urls = []
@@ -152,7 +159,6 @@ def get_public_image_urls(temp_files):
         if len(imgbb_urls) == len(temp_files):
             return imgbb_urls
 
-    # 3. GitHub Raw (Si el repositori és públic)
     repo = os.getenv("GITHUB_REPOSITORY")
     branch = os.getenv("GITHUB_REF_NAME", "main")
     if repo:
@@ -378,10 +384,13 @@ def main():
         font_title = ImageFont.load_default()
         font_text = ImageFont.load_default()
 
+    mockup_path = find_file_case_insensitive('mockup.png')
+    logo_path_found = find_file_case_insensitive('logo.png')
+
     logo_img = None
-    if os.path.exists(LOGO_PATH):
+    if logo_path_found:
         try:
-            logo_img = Image.open(LOGO_PATH).convert('RGBA')
+            logo_img = Image.open(logo_path_found).convert('RGBA')
             max_logo_height = 120
             w_percent = (max_logo_height / float(logo_img.size[1]))
             max_logo_width = int((float(logo_img.size[0]) * float(w_percent)))
@@ -441,20 +450,22 @@ def main():
             logo_y = height - 235
             img.paste(logo_img, (logo_x, logo_y), logo_img)
 
-        if slide["type"] == "cta" and os.path.exists(MOCKUP_PATH):
+        # Enganxar el Mockup (només a la slide CTA)
+        if slide["type"] == "cta" and mockup_path:
             try:
-                mockup_img = Image.open(MOCKUP_PATH).convert('RGBA')
-                w_orig, h_orig = mockup_img.size
-                mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.69)))
-                max_m_height = 790
+                mockup_img = Image.open(mockup_path).convert('RGBA')
+                max_m_height = 750
                 w_percent = (max_m_height / float(mockup_img.size[1]))
                 max_m_width = int((float(mockup_img.size[0]) * float(w_percent)))
                 mockup_img = mockup_img.resize((max_m_width, max_m_height), Image.Resampling.LANCZOS)
+                
                 mockup_x = int((width - mockup_img.size[0]) / 2)
-                mockup_y = height - mockup_img.size[1]
+                mockup_y = height - mockup_img.size[1] - 10
+                
                 img.paste(mockup_img, (mockup_x, mockup_y), mockup_img)
+                print(f"Pasted mockup ({os.path.basename(mockup_path)}) onto CTA slide.")
             except Exception as e:
-                print(f"⚠️ Mockup error: {e}")
+                print(f"⚠️ Error processant mockup: {e}")
 
         file_name = os.path.join(SLIDES_DIR, f"{post_id}_slide_{i+1}.jpg")
         img.save(file_name, "JPEG", quality=95)
