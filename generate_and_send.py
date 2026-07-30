@@ -450,20 +450,27 @@ def main():
             logo_y = height - 235
             img.paste(logo_img, (logo_x, logo_y), logo_img)
 
-        # Enganxar el Mockup (només a la slide CTA)
+        # Enganxar el Mockup gran i retallat (només a la slide CTA, com a la foto 2)
         if slide["type"] == "cta" and mockup_path:
             try:
                 mockup_img = Image.open(mockup_path).convert('RGBA')
-                max_m_height = 750
+                
+                # 1. Retallem el 31% inferior de la pantalla per mostrar només fins a "Spicy Questions" / "Ultimate Roast"
+                w_orig, h_orig = mockup_img.size
+                mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.69)))
+                
+                # 2. Reescalem a 790px d'alçada per fer-lo gran i cridaner
+                max_m_height = 790
                 w_percent = (max_m_height / float(mockup_img.size[1]))
                 max_m_width = int((float(mockup_img.size[0]) * float(w_percent)))
                 mockup_img = mockup_img.resize((max_m_width, max_m_height), Image.Resampling.LANCZOS)
                 
+                # 3. Posicionem flush arran de la part inferior de la slide (Y = 1080 - 790 = 290)
                 mockup_x = int((width - mockup_img.size[0]) / 2)
-                mockup_y = height - mockup_img.size[1] - 10
+                mockup_y = height - mockup_img.size[1]
                 
                 img.paste(mockup_img, (mockup_x, mockup_y), mockup_img)
-                print(f"Pasted mockup ({os.path.basename(mockup_path)}) onto CTA slide.")
+                print(f"Pasted cropped mockup ({os.path.basename(mockup_path)}) onto CTA slide.")
             except Exception as e:
                 print(f"⚠️ Error processant mockup: {e}")
 
