@@ -20,6 +20,7 @@ FONT_REG_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Reg
 BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
 
 def download_font(url, save_path):
     if not os.path.exists(save_path):
@@ -63,79 +64,25 @@ def send_telegram_notification(message, photo_path=None):
         print(f"⚠️ Error enviant notificació a Telegram: {e}")
 
 def upload_image_to_temp_host(file_path):
-    """Puja una imatge a un host de mitjans públic provant diferents servidors en cascada"""
-    filename = os.path.basename(file_path)
+    """Puja una imatge a ImgBB utilitzant la teva clau privada d'API"""
+    if not IMGBB_API_KEY:
+        raise Exception("❌ La variable IMGBB_API_KEY no està configurada als Secrets de GitHub.")
 
-    # 1. Intent 1: Pixeldrain API (Molt ràpid, URLs directes i sense restricció d'IPs)
-    try:
-        with open(file_path, 'rb') as f:
-            resp = requests.post(
-                f"https://pixeldrain.com/api/file/{filename}",
-                files={'file': f},
-                timeout=15
-            )
-        if resp.status_code in [200, 201]:
-            res_data = resp.json()
-            if res_data.get('success'):
-                file_id = res_data.get('id')
-                url = f"https://pixeldrain.com/api/file/{file_id}"
-                print(f"  └─ Imatge pujada a Pixeldrain: {url}")
-                return url
-            else:
-                print(f"⚠️ Pixeldrain no va retornar success: {res_data}")
+    url = f"https://api.imgbb.com/1/upload?key={IMGBB_API_KEY}"
+    with open(file_path, 'rb') as f:
+        resp = requests.post(url, files={'image': f}, timeout=30)
+    
+    if resp.status_code == 200:
+        res_json = resp.json()
+        if res_json.get('success'):
+            direct_url = res_json['data']['url']
+            print(f"  └─ Imatge pujada amb èxit a ImgBB: {direct_url}")
+            return direct_url
         else:
-            print(f"⚠️ Pixeldrain HTTP status: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"⚠️ Error pujant a Pixeldrain: {e}")
-
-    # 2. Intent 2: ImgBB API
-    try:
-        url = "https://api.imgbb.com/1/upload?key=6d207e6014306d15be12a40f4e74d228"
-        with open(file_path, 'rb') as f:
-            resp = requests.post(url, files={'image': f}, timeout=15)
-        if resp.status_code == 200:
-            res_data = resp.json()
-            if res_data.get('success'):
-                url = res_data['data']['url']
-                print(f"  └─ Imatge pujada a ImgBB: {url}")
-                return url
-            else:
-                print(f"⚠️ ImgBB no va retornar success: {res_data}")
-        else:
-            print(f"⚠️ ImgBB HTTP status: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"⚠️ Error pujant a ImgBB: {e}")
-
-    # 3. Intent 3: Imgur API
-    try:
-        headers = {'Authorization': 'Client-ID 54477631566e84e'}
-        with open(file_path, 'rb') as f:
-            resp = requests.post("https://api.imgur.com/3/image", headers=headers, files={'image': f}, timeout=15)
-        if resp.status_code == 200 and resp.json().get('success'):
-            url = resp.json()['data']['link']
-            print(f"  └─ Imatge pujada a Imgur: {url}")
-            return url
-        else:
-            print(f"⚠️ Imgur HTTP status: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"⚠️ Error pujant a Imgur: {e}")
-
-    # 4. Intent 4: Litterbox API
-    try:
-        url = "https://litterbox.catbox.moe/resources/internals/api.php"
-        data = {"reqtype": "fileupload", "time": "1h"}
-        with open(file_path, 'rb') as f:
-            resp = requests.post(url, data=data, files={'fileToUpload': f}, timeout=15)
-        if resp.status_code == 200 and resp.text.startswith("https://"):
-            url = resp.text.strip()
-            print(f"  └─ Imatge pujada a Litterbox: {url}")
-            return url
-        else:
-            print(f"⚠️ Litterbox HTTP status: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"⚠️ Error pujant a Litterbox: {e}")
-
-    raise Exception("No s'ha pogut pujar la imatge a cap dels servidors de mitjans.")
+            error_msg = res_json.get('error', {}).get('message', 'Error desconegut d\'ImgBB')
+            raise Exception(f"Error d'ImgBB: {error_msg}")
+    else:
+        raise Exception(f"HTTP Error {resp.status_code} des d'ImgBB: {resp.text}")
 
 def post_to_buffer(token, image_urls, caption):
     """Envia el carrousel a tots els canals utilitzant la GraphQL API de Buffer"""
@@ -455,7 +402,7 @@ def main():
         print("⚠️ Warning: BUFFER_ACCESS_TOKEN no està configurat als Secrets de GitHub.")
         return
 
-    print("☁️ Pujant imatges a servidor temporal (CDN) per generar URLs accesibles...")
+    print("☁️ Pujant imatges a ImgBB amb la teva clau privada...")
     public_urls = []
     for f_path in temp_files:
         p_url = upload_image_to_temp_host(f_path)
