@@ -66,7 +66,7 @@ def send_telegram_notification(message, photo_path=None):
 def upload_image_to_temp_host(file_path):
     """Puja una imatge a ImgBB utilitzant la teva clau privada d'API"""
     if not IMGBB_API_KEY:
-        raise Exception("❌ La variable IMGBB_API_KEY no està configurada als Secrets de GitHub.")
+        raise Exception("❌ La variable IMGBB_API_KEY no està configurat als Secrets de GitHub.")
 
     url = f"https://api.imgbb.com/1/upload?key={IMGBB_API_KEY}"
     with open(file_path, 'rb') as f:
@@ -190,19 +190,15 @@ def post_to_buffer(token, image_urls, caption):
             "assets": assets
         }
 
-        # Instagram i TikTok requereixen obligatòriament metadata.{service}.type = "post"
+        # Instagram requereix "type": "post" I "shouldShareToFeed": True
         if "instagram" in service_name:
             channel_input["metadata"] = {
                 "instagram": {
-                    "type": "post"
+                    "type": "post",
+                    "shouldShareToFeed": True
                 }
             }
-        elif "tiktok" in service_name:
-            channel_input["metadata"] = {
-                "tiktok": {
-                    "type": "post"
-                }
-            }
+        # TikTok no utilitza "type" a les metadades
 
         variables = {
             "input": channel_input
