@@ -76,41 +76,97 @@ def upload_image_to_temp_host(file_path):
         raise Exception(f"Failed to upload image: {response.text}")
 
 def post_to_buffer(token, image_urls, caption):
-    """Envia el carrousel a tots els canals de Buffer"""
-    profiles_url = f"https://api.bufferapp.com/1/profiles.json?access_token={token}"
-    resp = requests.get(profiles_url)
-    if resp.status_code != 200:
-        print(f"❌ Error registrant canals de Buffer: {resp.text}")
-        return False
+    """Envia el carrousel a tots els canals utilitzant la nova GraphQL API de Buffer"""
+    buffer_url = "https://api.buffer.com"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    # 1. Consulta GraphQL per obtenir els canals connectats
+    channels_query = """
+    query GetChannels {
+      account {
+        organizations {
+          id
+          channels {
+            id
+            name
+            service
+          }
+        }
+      }
+    }
+    """
     
-    profiles = resp.json()
-    if not profiles:
+    resp = requests.post(buffer_url, headers=headers, json={"query": channels_query})
+    if resp.status_code != 200:
+        print(f"❌ Error consultant GraphQL API de Buffer: {resp.text}")
+        return False
+
+    res_json = resp.json()
+    if "errors" in res_json:
+        print(f"❌ Error en la resposta de Buffer: {res_json['errors']}")
+        return False
+
+    organizations = res_json.get("data", {}).get("account", {}).get("organizations", [])
+    channels = []
+    for org in organizations:
+        channels.extend(org.get("channels", []))
+
+    if not channels:
         print("❌ No s'han trobat canals connectats a Buffer.")
         return False
 
-    profile_ids = [p['id'] for p in profiles]
-    print(f"📡 Canals trobats a Buffer ({len(profile_ids)}): {[p.get('formatted_username') for p in profiles]}")
+    print(f"📡 Canals trobats a Buffer ({len(channels)}): {[c.get('name') or c.get('service') for c in channels]}")
 
-    create_url = f"https://api.bufferapp.com/1/updates/create.json"
-    
-    payload = {
-        'access_token': token,
-        'profile_ids[]': profile_ids,
-        'text': caption,
-        'now': 'true',
-        'media[photo]': image_urls[0],
+    # Preparem la llista d'assets d'imatges per al carrousel
+    assets = [{"image": {"url": url}} for url in image_urls]
+
+    # 2. Mutation GraphQL per crear la publicació a cada canal
+    mutation = """
+    mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        ... on PostActionSuccess {
+          post {
+            id
+            text
+          }
+        }
+        ... on MutationError {
+          message
+        }
+      }
     }
-    
-    for idx, img_url in enumerate(image_urls[1:]):
-        payload[f'media[extra_media][{idx}]'] = img_url
+    """
 
-    post_resp = requests.post(create_url, data=payload)
-    if post_resp.status_code == 200 and post_resp.json().get('success'):
-        print("✅ Carrousel enviat amb èxit a Buffer!")
-        return True
-    else:
-        print(f"❌ Error enviant a Buffer: {post_resp.text}")
-        return False
+    all_success = True
+    for channel in channels:
+        channel_id = channel["id"]
+        variables = {
+            "input": {
+                "channelId": channel_id,
+                "text": caption,
+                "schedulingType": "automatic",
+                "mode": "shareNow",  # Utilitza "addToQueue" si prefereixes afegir-ho a la cua en comptes de publicar ara
+                "assets": assets
+            }
+        }
+
+        post_resp = requests.post(buffer_url, headers=headers, json={"query": mutation, "variables": variables})
+        if post_resp.status_code == 200:
+            post_data = post_resp.json().get("data", {}).get("createPost", {})
+            if "post" in post_data:
+                print(f"✅ Carrousel publicat amb èxit al canal {channel.get('name', channel_id)}!")
+            else:
+                error_msg = post_data.get("message", "Error desconegut")
+                print(f"❌ Error al canal {channel.get('name', channel_id)}: {error_msg}")
+                all_success = False
+        else:
+            print(f"❌ Error HTTP al canal {channel_id}: {post_resp.text}")
+            all_success = False
+
+    return all_success
 
 def main():
     download_font(FONT_BOLD_URL, FONT_BOLD_PATH)
@@ -292,11 +348,10 @@ def main():
         p_url = upload_image_to_temp_host(f_path)
         public_urls.append(p_url)
 
-    print("📤 Enviant el carrousel a Buffer...")
+    print("📤 Enviant el carrousel a Buffer via GraphQL API...")
     success = post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, selected_caption)
 
     if success:
-        # Enviem la notificació a Telegram amb la primera slide de mostra
         telegram_msg = f"🚀 **{post_id} Publicat amb èxit!**\n\n📱 **Destí:** Instagram & TikTok (Buffer)\n\n📝 **Caption:**\n{selected_caption}"
         send_telegram_notification(telegram_msg, photo_path=temp_files[0])
 
