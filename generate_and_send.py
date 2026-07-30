@@ -64,7 +64,6 @@ def send_telegram_notification(message, photo_path=None):
 
 def upload_image_to_temp_host(file_path):
     """Puja una imatge a Imgur CDN (oficialment recomanat per Buffer, 100% accessible)"""
-    # Intent 1: Imgur API
     try:
         headers = {'Authorization': 'Client-ID 54477631566e84e'}
         with open(file_path, 'rb') as f:
@@ -74,7 +73,6 @@ def upload_image_to_temp_host(file_path):
     except Exception as e:
         print(f"⚠️ Error pujant a Imgur: {e}")
 
-    # Intent 2: FreeImage.host API (Fallback)
     try:
         url = "https://freeimage.host/api/1/upload?key=6d207e6014306d15be12a40f4e74d228&action=upload&format=json"
         with open(file_path, 'rb') as f:
@@ -149,7 +147,8 @@ def post_to_buffer(token, image_urls, caption):
         print("❌ No s'han trobat canals connectats a Buffer.")
         return False
 
-    print(f"📡 Canals trobats a Buffer ({len(channels)}): {[f'{c.get('displayName') or c.get('name')} ({c.get('service')})' for c in channels]}")
+    channel_list_str = [f"{c.get('displayName') or c.get('name')} ({c.get('service')})" for c in channels]
+    print(f"📡 Canals trobats a Buffer ({len(channels)}): {channel_list_str}")
 
     # Preparem la llista d'assets d'imatges per al carrousel
     assets = [{"image": {"url": url}} for url in image_urls]
