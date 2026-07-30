@@ -450,27 +450,27 @@ def main():
             logo_y = height - 235
             img.paste(logo_img, (logo_x, logo_y), logo_img)
 
-        # Enganxar el Mockup (una mica més gran, un xic més amunt i mostrant Spicy/Roast)
+        # Enganxar el Mockup ajustat al mil·límetre (més amunt i mostrant SpicyQuestions/UltimateRoast senceres)
         if slide["type"] == "cta" and mockup_path:
             try:
                 mockup_img = Image.open(mockup_path).convert('RGBA')
                 w_orig, h_orig = mockup_img.size
                 
-                # 1. Retallem al 62% per mostrar Spicy Questions i Ultimate Roast senceres
-                mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.62)))
+                # 1. Retallem al 65% per incloure Spicy Questions i Ultimate Roast COMPLETAMENT senceres
+                mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.65)))
                 
-                # 2. Reescalem per amplada a 650px (una mica més gran)
-                target_width = 650
+                # 2. Reescalem per amplada a 620px (mida perfecta)
+                target_width = 620
                 w_percent = (target_width / float(mockup_img.size[0]))
                 target_height = int((float(mockup_img.size[1]) * float(w_percent)))
                 mockup_img = mockup_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
                 
-                # 3. Posicionem un xic més amunt per reduir el buit central
+                # 3. Posicionem a Y = 370 per apropar-lo al text "bio" i reduir el buit
                 mockup_x = int((width - target_width) / 2)
-                mockup_y = 330
+                mockup_y = 370
                 
                 img.paste(mockup_img, (mockup_x, mockup_y), mockup_img)
-                print(f"Pasted cropped mockup ({os.path.basename(mockup_path)}) onto CTA slide.")
+                print(f"Pasted perfectly framed mockup ({os.path.basename(mockup_path)}) onto CTA slide.")
             except Exception as e:
                 print(f"⚠️ Error processant mockup: {e}")
 
