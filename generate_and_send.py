@@ -63,27 +63,39 @@ def send_telegram_notification(message, photo_path=None):
         print(f"⚠️ Error enviant notificació a Telegram: {e}")
 
 def upload_image_to_temp_host(file_path):
-    """Puja una imatge a tmpfiles.org per obtenir una URL pública temporal"""
-    url = "https://tmpfiles.org/api/v1/upload"
-    with open(file_path, 'rb') as f:
-        response = requests.post(url, files={'file': f})
-    if response.status_code == 200:
-        res_json = response.json()
-        raw_url = res_json['data']['url']
-        direct_url = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-        return direct_url
-    else:
-        raise Exception(f"Failed to upload image: {response.text}")
+    """Puja una imatge a Catbox per obtenir una URL pública directa i sense bloquejos d'anti-bot"""
+    try:
+        url = "https://catbox.moe/user/api.php"
+        data = {"reqtype": "fileupload"}
+        with open(file_path, 'rb') as f:
+            resp = requests.post(url, data=data, files={'fileToUpload': f}, timeout=15)
+        if resp.status_code == 200 and resp.text.startswith("https://"):
+            return resp.text.strip()
+    except Exception as e:
+        print(f"⚠️ Error pujant a Catbox: {e}")
+
+    # Fallback temporal si falla Catbox
+    try:
+        url = "https://tmpfiles.org/api/v1/upload"
+        with open(file_path, 'rb') as f:
+            resp = requests.post(url, files={'file': f}, timeout=15)
+        if resp.status_code == 200:
+            raw_url = resp.json()['data']['url']
+            return raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+    except Exception as e:
+        print(f"⚠️ Error pujant a tmpfiles: {e}")
+
+    raise Exception("No s'ha pogut pujar la imatge a cap servidor temporal.")
 
 def post_to_buffer(token, image_urls, caption):
-    """Envia el carrousel a tots els canals utilitzant la GraphQL API oficial de Buffer"""
+    """Envia el carrousel a tots els canals utilitzant la GraphQL API de Buffer"""
     buffer_url = "https://api.buffer.com"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
-    # 1. Pas 1: Obtenir l'ID de l'organització
+    # 1. Obtenir l'ID de l'organització
     org_query = """
     query GetOrganizations {
       account {
@@ -110,7 +122,7 @@ def post_to_buffer(token, image_urls, caption):
         print("❌ No s'han trobat organitzacions al teu compte de Buffer.")
         return False
 
-    # 2. Pas 2: Obtenir els canals de cada organització
+    # 2. Obtenir els canals de cada organització
     channels_query = """
     query GetChannels($input: ChannelsInput!) {
       channels(input: $input) {
@@ -143,7 +155,7 @@ def post_to_buffer(token, image_urls, caption):
     # Preparem la llista d'assets d'imatges per al carrousel
     assets = [{"image": {"url": url}} for url in image_urls]
 
-    # 3. Pas 3: Crear la publicació a cada canal
+    # 3. Mutation GraphQL per crear la publicació a cada canal
     mutation = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
@@ -163,14 +175,26 @@ def post_to_buffer(token, image_urls, caption):
     all_success = True
     for channel in channels:
         channel_id = channel["id"]
-        variables = {
-            "input": {
-                "channelId": channel_id,
-                "text": caption,
-                "schedulingType": "automatic",
-                "mode": "shareNow",  # O "addToQueue" si prefereixes afegir a la cua
-                "assets": assets
+        service_name = str(channel.get("service", "")).lower()
+
+        channel_input = {
+            "channelId": channel_id,
+            "text": caption,
+            "schedulingType": "automatic",
+            "mode": "shareNow",
+            "assets": assets
+        }
+
+        # Instagram requereix obligatòriament metadata.instagram.type = "post"
+        if "instagram" in service_name:
+            channel_input["metadata"] = {
+                "instagram": {
+                    "type": "post"
+                }
             }
+
+        variables = {
+            "input": channel_input
         }
 
         post_resp = requests.post(buffer_url, headers=headers, json={"query": mutation, "variables": variables})
@@ -362,7 +386,7 @@ def main():
         print("⚠️ Warning: BUFFER_ACCESS_TOKEN no està configurat als Secrets de GitHub.")
         return
 
-    print("☁️ Pujant imatges a servidor temporal per generar URLs públiques...")
+    print("☁️ Pujant imatges a servidor temporal (Catbox) per generar URLs públiques accesibles...")
     public_urls = []
     for f_path in temp_files:
         p_url = upload_image_to_temp_host(f_path)
