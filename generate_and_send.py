@@ -76,54 +76,74 @@ def upload_image_to_temp_host(file_path):
         raise Exception(f"Failed to upload image: {response.text}")
 
 def post_to_buffer(token, image_urls, caption):
-    """Envia el carrousel a tots els canals utilitzant la nova GraphQL API de Buffer"""
+    """Envia el carrousel a tots els canals utilitzant la GraphQL API oficial de Buffer"""
     buffer_url = "https://api.buffer.com"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
-    # 1. Consulta GraphQL per obtenir els canals connectats
-    channels_query = """
-    query GetChannels {
+    # 1. Pas 1: Obtenir l'ID de l'organització
+    org_query = """
+    query GetOrganizations {
       account {
         organizations {
           id
-          channels {
-            id
-            name
-            service
-          }
+          name
         }
       }
     }
     """
     
-    resp = requests.post(buffer_url, headers=headers, json={"query": channels_query})
+    resp = requests.post(buffer_url, headers=headers, json={"query": org_query})
     if resp.status_code != 200:
-        print(f"❌ Error consultant GraphQL API de Buffer: {resp.text}")
+        print(f"❌ Error HTTP consultant Buffer: {resp.status_code} - {resp.text}")
         return False
 
     res_json = resp.json()
     if "errors" in res_json:
-        print(f"❌ Error en la resposta de Buffer: {res_json['errors']}")
+        print(f"❌ Error obtenint organitzacions de Buffer: {res_json['errors']}")
         return False
 
     organizations = res_json.get("data", {}).get("account", {}).get("organizations", [])
+    if not organizations:
+        print("❌ No s'han trobat organitzacions al teu compte de Buffer.")
+        return False
+
+    # 2. Pas 2: Obtenir els canals de cada organització
+    channels_query = """
+    query GetChannels($input: ChannelsInput!) {
+      channels(input: $input) {
+        id
+        name
+        displayName
+        service
+      }
+    }
+    """
+
     channels = []
     for org in organizations:
-        channels.extend(org.get("channels", []))
+        org_id = org["id"]
+        c_resp = requests.post(buffer_url, headers=headers, json={
+            "query": channels_query,
+            "variables": {"input": {"organizationId": org_id}}
+        })
+        if c_resp.status_code == 200:
+            c_data = c_resp.json()
+            if "data" in c_data and "channels" in c_data["data"]:
+                channels.extend(c_data["data"]["channels"] or [])
 
     if not channels:
         print("❌ No s'han trobat canals connectats a Buffer.")
         return False
 
-    print(f"📡 Canals trobats a Buffer ({len(channels)}): {[c.get('name') or c.get('service') for c in channels]}")
+    print(f"📡 Canals trobats a Buffer ({len(channels)}): {[c.get('displayName') or c.get('name') or c.get('service') for c in channels]}")
 
     # Preparem la llista d'assets d'imatges per al carrousel
     assets = [{"image": {"url": url}} for url in image_urls]
 
-    # 2. Mutation GraphQL per crear la publicació a cada canal
+    # 3. Pas 3: Crear la publicació a cada canal
     mutation = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
@@ -148,7 +168,7 @@ def post_to_buffer(token, image_urls, caption):
                 "channelId": channel_id,
                 "text": caption,
                 "schedulingType": "automatic",
-                "mode": "shareNow",  # Utilitza "addToQueue" si prefereixes afegir-ho a la cua en comptes de publicar ara
+                "mode": "shareNow",  # O "addToQueue" si prefereixes afegir a la cua
                 "assets": assets
             }
         }
@@ -157,7 +177,7 @@ def post_to_buffer(token, image_urls, caption):
         if post_resp.status_code == 200:
             post_data = post_resp.json().get("data", {}).get("createPost", {})
             if "post" in post_data:
-                print(f"✅ Carrousel publicat amb èxit al canal {channel.get('name', channel_id)}!")
+                print(f"✅ Carrousel publicat amb èxit al canal {channel.get('displayName') or channel.get('name', channel_id)}!")
             else:
                 error_msg = post_data.get("message", "Error desconegut")
                 print(f"❌ Error al canal {channel.get('name', channel_id)}: {error_msg}")
