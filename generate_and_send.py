@@ -450,27 +450,33 @@ def main():
             logo_y = height - 235
             img.paste(logo_img, (logo_x, logo_y), logo_img)
 
-        # Enganxar el Mockup ajustat al mil·límetre (més amunt i mostrant SpicyQuestions/UltimateRoast senceres)
+        # Enganxar el Mockup (molt més gran, sense espais transparents superiors i molt més amunt)
         if slide["type"] == "cta" and mockup_path:
             try:
                 mockup_img = Image.open(mockup_path).convert('RGBA')
+                
+                # 1. Eliminar automàticament qualsevol espai transparent/buit superior o lateral del fitxer
+                bbox = mockup_img.getbbox()
+                if bbox:
+                    mockup_img = mockup_img.crop(bbox)
+                
                 w_orig, h_orig = mockup_img.size
                 
-                # 1. Retallem al 65% per incloure Spicy Questions i Ultimate Roast COMPLETAMENT senceres
-                mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.65)))
+                # 2. Retallem el 30% inferior per tallar Politics/Food i deixar SpicyQuestions/UltimateRoast
+                mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.70)))
                 
-                # 2. Reescalem per amplada a 620px (mida perfecta)
-                target_width = 620
+                # 3. Reescalem l'amplada a 720px (MOLT MÉS GRAN I AMPLE)
+                target_width = 720
                 w_percent = (target_width / float(mockup_img.size[0]))
                 target_height = int((float(mockup_img.size[1]) * float(w_percent)))
                 mockup_img = mockup_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
                 
-                # 3. Posicionem a Y = 370 per apropar-lo al text "bio" i reduir el buit
+                # 4. Posicionem a Y = 280 (molt més amunt, just sota de "Link in bio")
                 mockup_x = int((width - target_width) / 2)
-                mockup_y = 370
+                mockup_y = 280
                 
                 img.paste(mockup_img, (mockup_x, mockup_y), mockup_img)
-                print(f"Pasted perfectly framed mockup ({os.path.basename(mockup_path)}) onto CTA slide.")
+                print(f"Pasted large, high mockup ({os.path.basename(mockup_path)}) onto CTA slide.")
             except Exception as e:
                 print(f"⚠️ Error processant mockup: {e}")
 
