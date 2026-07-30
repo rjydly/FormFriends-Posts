@@ -2,6 +2,7 @@ import os
 import csv
 import random
 import requests
+import subprocess
 from PIL import Image, ImageDraw, ImageFont
 
 # ========================================================
@@ -11,6 +12,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(BASE_DIR, 'posts.csv')
 LOGO_PATH = os.path.join(BASE_DIR, 'logo.png')
 MOCKUP_PATH = os.path.join(BASE_DIR, 'mockup.png')
+SLIDES_DIR = os.path.join(BASE_DIR, 'public_slides')
 FONT_BOLD_PATH = os.path.join(BASE_DIR, 'Poppins-Bold.ttf')
 FONT_REG_PATH = os.path.join(BASE_DIR, 'Poppins-Regular.ttf')
 
@@ -64,9 +66,9 @@ def send_telegram_notification(message, photo_path=None):
         print(f"⚠️ Error enviant notificació a Telegram: {e}")
 
 def upload_image_to_temp_host(file_path):
-    """Puja una imatge a ImgBB utilitzant la teva clau privada d'API"""
+    """Fallback: Puja una imatge a ImgBB si s'executa localment fora de GitHub Actions"""
     if not IMGBB_API_KEY:
-        raise Exception("❌ La variable IMGBB_API_KEY no està configurat als Secrets de GitHub.")
+        raise Exception("❌ La variable IMGBB_API_KEY no està configurada.")
 
     url = f"https://api.imgbb.com/1/upload?key={IMGBB_API_KEY}"
     with open(file_path, 'rb') as f:
@@ -75,14 +77,40 @@ def upload_image_to_temp_host(file_path):
     if resp.status_code == 200:
         res_json = resp.json()
         if res_json.get('success'):
-            direct_url = res_json['data']['url']
-            print(f"  └─ Imatge pujada amb èxit a ImgBB: {direct_url}")
-            return direct_url
+            return res_json['data']['url']
         else:
-            error_msg = res_json.get('error', {}).get('message', 'Error desconegut d\'ImgBB')
-            raise Exception(f"Error d'ImgBB: {error_msg}")
+            raise Exception(f"Error ImgBB: {res_json.get('error', {}).get('message')}")
     else:
-        raise Exception(f"HTTP Error {resp.status_code} des d'ImgBB: {resp.text}")
+        raise Exception(f"HTTP Error {resp.status_code} ImgBB")
+
+def get_public_image_urls(temp_files):
+    """Publica les imatges a GitHub per tenir URLs directes de GitHub Raw CDN (100% estables per Buffer)"""
+    repo = os.getenv("GITHUB_REPOSITORY")
+    branch = os.getenv("GITHUB_REF_NAME", "main")
+    
+    if repo:
+        try:
+            print("📦 Guardant imatges al repositori de GitHub per servir des de GitHub Raw CDN...")
+            subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+            subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
+            subprocess.run(["git", "add", "public_slides/"], check=True)
+            subprocess.run(["git", "commit", "-m", "upload: add slide images for Buffer"], check=False)
+            subprocess.run(["git", "push"], check=False)
+            print("✅ Imatges pujades a GitHub!")
+        except Exception as e:
+            print(f"⚠️ Error fent git push de les imatges: {e}")
+
+    public_urls = []
+    for f_path in temp_files:
+        fname = os.path.basename(f_path)
+        if repo:
+            raw_url = f"https://raw.githubusercontent.com/{repo}/{branch}/public_slides/{fname}"
+            print(f"  └─ URL pública GitHub Raw: {raw_url}")
+            public_urls.append(raw_url)
+        else:
+            public_urls.append(upload_image_to_temp_host(f_path))
+
+    return public_urls
 
 def post_to_buffer(token, image_urls, caption):
     """Envia el carrousel a tots els canals utilitzant la GraphQL API de Buffer"""
@@ -150,10 +178,8 @@ def post_to_buffer(token, image_urls, caption):
     channel_list_str = [f"{c.get('displayName') or c.get('name')} ({c.get('service')})" for c in channels]
     print(f"📡 Canals trobats a Buffer ({len(channels)}): {channel_list_str}")
 
-    # Preparem la llista d'assets d'imatges per al carrousel
     assets = [{"image": {"url": url}} for url in image_urls]
 
-    # 3. Mutation GraphQL per crear la publicació a cada canal
     mutation = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
@@ -190,7 +216,6 @@ def post_to_buffer(token, image_urls, caption):
             "assets": assets
         }
 
-        # Instagram requereix "type": "post" I "shouldShareToFeed": True
         if "instagram" in service_name:
             channel_input["metadata"] = {
                 "instagram": {
@@ -198,7 +223,6 @@ def post_to_buffer(token, image_urls, caption):
                     "shouldShareToFeed": True
                 }
             }
-        # TikTok no utilitza "type" a les metadades
 
         variables = {
             "input": channel_input
@@ -227,6 +251,8 @@ def post_to_buffer(token, image_urls, caption):
 def main():
     download_font(FONT_BOLD_URL, FONT_BOLD_PATH)
     download_font(FONT_REG_URL, FONT_REG_PATH)
+
+    os.makedirs(SLIDES_DIR, exist_ok=True)
 
     if not os.path.exists(CSV_PATH):
         print(f"❌ Error: CSV file not found at {CSV_PATH}")
@@ -377,11 +403,11 @@ def main():
             except Exception as e:
                 print(f"⚠️ Mockup error: {e}")
 
-        file_name = os.path.join(BASE_DIR, f"{post_id}_slide_{i+1}.png")
-        img.save(file_name, "PNG")
+        file_name = os.path.join(SLIDES_DIR, f"{post_id}_slide_{i+1}.jpg")
+        img.save(file_name, "JPEG", quality=95)
         temp_files.append(file_name)
 
-    print("Generated 7 slide images.")
+    print("Generated 7 slide images in JPEG format.")
 
     hashtag_pool = ['#friendforms', '#socialexperiment', '#perspective', '#humanconnection', '#mindset', '#deepconversations', '#socialgame', '#connection']
     chosen_hashtags = random.sample(hashtag_pool, 4)
@@ -398,11 +424,8 @@ def main():
         print("⚠️ Warning: BUFFER_ACCESS_TOKEN no està configurat als Secrets de GitHub.")
         return
 
-    print("☁️ Pujant imatges a ImgBB amb la teva clau privada...")
-    public_urls = []
-    for f_path in temp_files:
-        p_url = upload_image_to_temp_host(f_path)
-        public_urls.append(p_url)
+    # Obtenim les URLs directes i estables des de GitHub Raw CDN
+    public_urls = get_public_image_urls(temp_files)
 
     print("📤 Enviant el carrousel a Buffer via GraphQL API...")
     success = post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, selected_caption)
@@ -419,13 +442,6 @@ def main():
         print(f"📝 CSV actualitzat! Fila {current_row_idx + 1} ({post_id}) marcada com a 'Done'.")
     else:
         send_telegram_notification(f"❌ Error en publicar **{post_id}** a Buffer.")
-
-    # Neteja de fitxers locals
-    for file_path in temp_files:
-        try:
-            os.remove(file_path)
-        except OSError:
-            pass
 
 if __name__ == "__main__":
     main()
