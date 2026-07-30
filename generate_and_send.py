@@ -2,7 +2,9 @@ import os
 import csv
 import random
 import requests
+import ftplib
 import subprocess
+import html
 from PIL import Image, ImageDraw, ImageFont
 
 # ========================================================
@@ -23,6 +25,10 @@ BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
+
+FTP_HOST = os.getenv("FTP_HOST")
+FTP_USER = os.getenv("FTP_USER")
+FTP_PASS = os.getenv("FTP_PASS")
 
 def download_font(url, save_path):
     if not os.path.exists(save_path):
@@ -49,26 +55,66 @@ def wrap_text(text, draw, font, max_width):
     return lines
 
 def send_telegram_notification(message, photo_path=None):
-    """Envia un missatge/notificació al teu Telegram de confirmació"""
+    """Envia la notificació en format HTML a Telegram juntament amb la imatge de portada"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("ℹ️ Telegram no configurat (s'omet la notificació).")
         return
     try:
         if photo_path and os.path.exists(photo_path):
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+            payload = {
+                'chat_id': TELEGRAM_CHAT_ID,
+                'caption': message,
+                'parse_mode': 'HTML'
+            }
             with open(photo_path, 'rb') as f:
-                requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': message}, files={'photo': f})
+                requests.post(url, data=payload, files={'photo': f})
         else:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': message})
+            payload = {
+                'chat_id': TELEGRAM_CHAT_ID,
+                'text': message,
+                'parse_mode': 'HTML'
+            }
+            requests.post(url, data=payload)
         print("📲 Notificació enviada a Telegram!")
     except Exception as e:
         print(f"⚠️ Error enviant notificació a Telegram: {e}")
 
-def upload_image_to_temp_host(file_path):
-    """Fallback: Puja una imatge a ImgBB si s'executa localment fora de GitHub Actions"""
+def upload_via_ftp(file_path):
+    """Puja la imatge al servidor web de formfriends.com via FTP"""
+    if not (FTP_HOST and FTP_USER and FTP_PASS):
+        return None
+
+    filename = os.path.basename(file_path)
+    try:
+        ftp = ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS, timeout=30)
+        try:
+            ftp.cwd("public_html")
+        except Exception:
+            pass
+
+        try:
+            ftp.cwd("public_slides")
+        except Exception:
+            ftp.mkd("public_slides")
+            ftp.cwd("public_slides")
+
+        with open(file_path, 'rb') as f:
+            ftp.storbinary(f'STOR {filename}', f)
+        ftp.quit()
+
+        public_url = f"https://formfriends.com/public_slides/{filename}"
+        print(f"  └─ Imatge pujada per FTP a formfriends.com: {public_url}")
+        return public_url
+    except Exception as e:
+        print(f"⚠️ Error pujant per FTP: {e}")
+        return None
+
+def upload_to_imgbb(file_path):
+    """Puja una imatge a ImgBB si tenim la clau"""
     if not IMGBB_API_KEY:
-        raise Exception("❌ La variable IMGBB_API_KEY no està configurada.")
+        return None
 
     url = f"https://api.imgbb.com/1/upload?key={IMGBB_API_KEY}"
     with open(file_path, 'rb') as f:
@@ -77,50 +123,65 @@ def upload_image_to_temp_host(file_path):
     if resp.status_code == 200:
         res_json = resp.json()
         if res_json.get('success'):
-            return res_json['data']['url']
-        else:
-            raise Exception(f"Error ImgBB: {res_json.get('error', {}).get('message')}")
-    else:
-        raise Exception(f"HTTP Error {resp.status_code} ImgBB")
+            direct_url = res_json['data']['url']
+            print(f"  └─ Imatge pujada a ImgBB: {direct_url}")
+            return direct_url
+    return None
 
 def get_public_image_urls(temp_files):
-    """Publica les imatges a GitHub per tenir URLs directes de GitHub Raw CDN (100% estables per Buffer)"""
+    """Estratègia de generació de URLs públiques"""
+    # 1. Provar FTP (formfriends.com)
+    if FTP_HOST and FTP_USER and FTP_PASS:
+        print("🌐 Pujant imatges al teu propi servidor web (formfriends.com) via FTP...")
+        ftp_urls = []
+        for f_path in temp_files:
+            u = upload_via_ftp(f_path)
+            if u:
+                ftp_urls.append(u)
+        if len(ftp_urls) == len(temp_files):
+            return ftp_urls
+
+    # 2. Provar ImgBB
+    if IMGBB_API_KEY:
+        print("☁️ Pujant imatges a ImgBB...")
+        imgbb_urls = []
+        for f_path in temp_files:
+            u = upload_to_imgbb(f_path)
+            if u:
+                imgbb_urls.append(u)
+        if len(imgbb_urls) == len(temp_files):
+            return imgbb_urls
+
+    # 3. GitHub Raw (Si el repositori és públic)
     repo = os.getenv("GITHUB_REPOSITORY")
     branch = os.getenv("GITHUB_REF_NAME", "main")
-    
     if repo:
         try:
-            print("📦 Guardant imatges al repositori de GitHub per servir des de GitHub Raw CDN...")
+            print("📦 Guardant imatges al repositori de GitHub...")
             subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
             subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
             subprocess.run(["git", "add", "public_slides/"], check=True)
             subprocess.run(["git", "commit", "-m", "upload: add slide images for Buffer"], check=False)
             subprocess.run(["git", "push"], check=False)
-            print("✅ Imatges pujades a GitHub!")
-        except Exception as e:
-            print(f"⚠️ Error fent git push de les imatges: {e}")
+        except Exception:
+            pass
 
-    public_urls = []
-    for f_path in temp_files:
-        fname = os.path.basename(f_path)
-        if repo:
+        raw_urls = []
+        for f_path in temp_files:
+            fname = os.path.basename(f_path)
             raw_url = f"https://raw.githubusercontent.com/{repo}/{branch}/public_slides/{fname}"
-            print(f"  └─ URL pública GitHub Raw: {raw_url}")
-            public_urls.append(raw_url)
-        else:
-            public_urls.append(upload_image_to_temp_host(f_path))
+            raw_urls.append(raw_url)
+        return raw_urls
 
-    return public_urls
+    raise Exception("❌ No s'ha pogut obtenir cap URL pública.")
 
 def post_to_buffer(token, image_urls, caption):
-    """Envia el carrousel a tots els canals utilitzant la GraphQL API de Buffer"""
     buffer_url = "https://api.buffer.com"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
-    # 1. Obtenir l'ID de l'organització
     org_query = """
     query GetOrganizations {
       account {
@@ -131,23 +192,18 @@ def post_to_buffer(token, image_urls, caption):
       }
     }
     """
-    
     resp = requests.post(buffer_url, headers=headers, json={"query": org_query})
     if resp.status_code != 200:
-        print(f"❌ Error HTTP consultant Buffer: {resp.status_code} - {resp.text}")
         return False
 
     res_json = resp.json()
     if "errors" in res_json:
-        print(f"❌ Error obtenint organitzacions de Buffer: {res_json['errors']}")
         return False
 
     organizations = res_json.get("data", {}).get("account", {}).get("organizations", [])
     if not organizations:
-        print("❌ No s'han trobat organitzacions al teu compte de Buffer.")
         return False
 
-    # 2. Obtenir els canals de cada organització
     channels_query = """
     query GetChannels($input: ChannelsInput!) {
       channels(input: $input) {
@@ -172,7 +228,6 @@ def post_to_buffer(token, image_urls, caption):
                 channels.extend(c_data["data"]["channels"] or [])
 
     if not channels:
-        print("❌ No s'han trobat canals connectats a Buffer.")
         return False
 
     channel_list_str = [f"{c.get('displayName') or c.get('name')} ({c.get('service')})" for c in channels]
@@ -224,9 +279,7 @@ def post_to_buffer(token, image_urls, caption):
                 }
             }
 
-        variables = {
-            "input": channel_input
-        }
+        variables = {"input": channel_input}
 
         post_resp = requests.post(buffer_url, headers=headers, json={"query": mutation, "variables": variables})
         if post_resp.status_code == 200:
@@ -290,7 +343,7 @@ def main():
 
     if current_row_idx is None:
         print("🎉 Tot el CSV està completat!")
-        send_telegram_notification("🎉 Tots els posts del CSV s'han publicat!")
+        send_telegram_notification("🎉 <b>Tots els posts del CSV s'han publicat!</b>")
         return
 
     post_id = post_data.get('Post_ID', f"Post_{current_row_idx + 1}")
@@ -424,14 +477,19 @@ def main():
         print("⚠️ Warning: BUFFER_ACCESS_TOKEN no està configurat als Secrets de GitHub.")
         return
 
-    # Obtenim les URLs directes i estables des de GitHub Raw CDN
     public_urls = get_public_image_urls(temp_files)
 
     print("📤 Enviant el carrousel a Buffer via GraphQL API...")
     success = post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, selected_caption)
 
     if success:
-        telegram_msg = f"🚀 **{post_id} Publicat amb èxit!**\n\n📱 **Destí:** Instagram & TikTok (Buffer)\n\n📝 **Caption:**\n{selected_caption}"
+        title_text = html.escape(post_data.get('Slide_1_Title', ''))
+        telegram_msg = (
+            f"🚀 <b>{post_id} publicat amb èxit!</b>\n\n"
+            f"📱 <b>Destí:</b> Instagram &amp; TikTok\n"
+            f"📖 <b>Portada:</b> {title_text}\n"
+            f"🏷️ <b>Hashtags:</b> {tags_string}"
+        )
         send_telegram_notification(telegram_msg, photo_path=temp_files[0])
 
         rows[current_row_idx][status_col_idx] = 'Done'
@@ -441,7 +499,7 @@ def main():
             writer.writerows(rows)
         print(f"📝 CSV actualitzat! Fila {current_row_idx + 1} ({post_id}) marcada com a 'Done'.")
     else:
-        send_telegram_notification(f"❌ Error en publicar **{post_id}** a Buffer.")
+        send_telegram_notification(f"❌ <b>Error en publicar {post_id} a Buffer.</b>")
 
 if __name__ == "__main__":
     main()
