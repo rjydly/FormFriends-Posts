@@ -450,7 +450,7 @@ def main():
             logo_y = height - 235
             img.paste(logo_img, (logo_x, logo_y), logo_img)
 
-        # Enganxar el Mockup (mida mitjana 640px, Y = 360 per no tapar el text)
+        # Enganxar el Mockup (mida ajustada 550px, Y = 390 per deixar aire sota del text)
         if slide["type"] == "cta" and mockup_path:
             try:
                 mockup_img = Image.open(mockup_path).convert('RGBA')
@@ -462,18 +462,18 @@ def main():
                 
                 w_orig, h_orig = mockup_img.size
                 
-                # 2. Retallem al 70% per incloure Spicy Questions i Ultimate Roast completament
+                # 2. Retallem al 70% per incloure Spicy Questions i Ultimate Roast
                 mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.70)))
                 
-                # 3. Reescalem l'amplada a 640px (mida mitjana equilibrada)
-                target_width = 640
+                # 3. Reescalem l'amplada a 550px (mida mitjana fi i elegant)
+                target_width = 550
                 w_percent = (target_width / float(mockup_img.size[0]))
                 target_height = int((float(mockup_img.size[1]) * float(w_percent)))
                 mockup_img = mockup_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
                 
-                # 4. Posicionem a Y = 360px per deixar aire sota del text "Link in bio"
+                # 4. Posicionem a Y = 390px per deixar espai sota de "Link in bio"
                 mockup_x = int((width - target_width) / 2)
-                mockup_y = 360
+                mockup_y = 390
                 
                 img.paste(mockup_img, (mockup_x, mockup_y), mockup_img)
                 print(f"Pasted well-proportioned mockup ({os.path.basename(mockup_path)}) onto CTA slide.")
