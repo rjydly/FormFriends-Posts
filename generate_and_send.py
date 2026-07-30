@@ -1,12 +1,11 @@
 import os
 import csv
-import time
 import random
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
 # ========================================================
-# CONFIGURATION & PATHS
+# CONFIGURACIÓ I RUTES
 # ========================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(BASE_DIR, 'posts.csv')
@@ -15,11 +14,10 @@ MOCKUP_PATH = os.path.join(BASE_DIR, 'mockup.png')
 FONT_BOLD_PATH = os.path.join(BASE_DIR, 'Poppins-Bold.ttf')
 FONT_REG_PATH = os.path.join(BASE_DIR, 'Poppins-Regular.ttf')
 
-# Fonts URL
 FONT_BOLD_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Bold.ttf"
 FONT_REG_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Regular.ttf"
 
-# Telegram configuration from Environment Variables
+BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -47,12 +45,77 @@ def wrap_text(text, draw, font, max_width):
     lines.append(current_line)
     return lines
 
+def send_telegram_notification(message, photo_path=None):
+    """Envia un missatge/notificació al teu Telegram de confirmació"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("ℹ️ Telegram no configurat (s'omet la notificació).")
+        return
+    try:
+        if photo_path and os.path.exists(photo_path):
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+            with open(photo_path, 'rb') as f:
+                requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': message}, files={'photo': f})
+        else:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': message})
+        print("📲 Notificació enviada a Telegram!")
+    except Exception as e:
+        print(f"⚠️ Error enviant notificació a Telegram: {e}")
+
+def upload_image_to_temp_host(file_path):
+    """Puja una imatge a tmpfiles.org per obtenir una URL pública temporal"""
+    url = "https://tmpfiles.org/api/v1/upload"
+    with open(file_path, 'rb') as f:
+        response = requests.post(url, files={'file': f})
+    if response.status_code == 200:
+        res_json = response.json()
+        raw_url = res_json['data']['url']
+        direct_url = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+        return direct_url
+    else:
+        raise Exception(f"Failed to upload image: {response.text}")
+
+def post_to_buffer(token, image_urls, caption):
+    """Envia el carrousel a tots els canals de Buffer"""
+    profiles_url = f"https://api.bufferapp.com/1/profiles.json?access_token={token}"
+    resp = requests.get(profiles_url)
+    if resp.status_code != 200:
+        print(f"❌ Error registrant canals de Buffer: {resp.text}")
+        return False
+    
+    profiles = resp.json()
+    if not profiles:
+        print("❌ No s'han trobat canals connectats a Buffer.")
+        return False
+
+    profile_ids = [p['id'] for p in profiles]
+    print(f"📡 Canals trobats a Buffer ({len(profile_ids)}): {[p.get('formatted_username') for p in profiles]}")
+
+    create_url = f"https://api.bufferapp.com/1/updates/create.json"
+    
+    payload = {
+        'access_token': token,
+        'profile_ids[]': profile_ids,
+        'text': caption,
+        'now': 'true',
+        'media[photo]': image_urls[0],
+    }
+    
+    for idx, img_url in enumerate(image_urls[1:]):
+        payload[f'media[extra_media][{idx}]'] = img_url
+
+    post_resp = requests.post(create_url, data=payload)
+    if post_resp.status_code == 200 and post_resp.json().get('success'):
+        print("✅ Carrousel enviat amb èxit a Buffer!")
+        return True
+    else:
+        print(f"❌ Error enviant a Buffer: {post_resp.text}")
+        return False
+
 def main():
-    # 1. Download Poppins Font if not present
     download_font(FONT_BOLD_URL, FONT_BOLD_PATH)
     download_font(FONT_REG_URL, FONT_REG_PATH)
 
-    # 2. Read the CSV file
     if not os.path.exists(CSV_PATH):
         print(f"❌ Error: CSV file not found at {CSV_PATH}")
         return
@@ -76,48 +139,34 @@ def main():
 
     status_col_idx = headers.index('Status')
 
-    # 3. Find the first row that is not "Done"
     current_row_idx = None
     post_data = None
     for idx, r in enumerate(rows):
-        # Handle cases where row might be shorter than headers
         while len(r) < len(headers):
             r.append('')
         status_val = r[status_col_idx].strip().lower()
         if status_val != 'done':
             current_row_idx = idx
-            # Convert row list to dict for easier access
             post_data = dict(zip(headers, r))
             break
 
     if current_row_idx is None:
-        print("🎉 Brutal! All posts are marked as 'Done' in your CSV file.")
+        print("🎉 Tot el CSV està completat!")
+        send_telegram_notification("🎉 Tots els posts del CSV s'han publicat!")
         return
 
     post_id = post_data.get('Post_ID', f"Post_{current_row_idx + 1}")
-    print(f"🚀 Generating images and caption for {post_id}...")
+    print(f"🚀 Generant imatges i caption per {post_id}...")
 
-    # 4. Slide configuration and styling
     width, height = 1080, 1080
-    dark_backgrounds = [
-        '#101520', '#161F2B', '#121824',
-        '#1A2A30', '#181A1B',
-        '#4A0E17', '#34050B'
-    ]
+    dark_backgrounds = ['#101520', '#161F2B', '#121824', '#1A2A30', '#181A1B', '#4A0E17', '#34050B']
     bg_color = random.choice(dark_backgrounds)
 
-    # List of CTAs to cycle through randomly (No emojis)
     cta_pool = [
         "Find out who knows you best. Link in bio",
         "Get your custom story link and let your friends vote. Link in bio",
         "Discover your group's unfiltered opinions. Link in bio",
-        "Put your friendship to the test. Link in bio",
-        "Let your friends drop their honest takes on your story. Link in bio",
-        "Ready to see what they really think? Link in bio",
-        "See who in your chat is the most chaotic. Link in bio",
-        "Start your own interactive friend game. Link in bio",
-        "Get custom polls for your group. Link in bio",
-        "Let your friends decide. Link in bio"
+        "Put your friendship to the test. Link in bio"
     ]
     selected_cta = random.choice(cta_pool)
 
@@ -131,16 +180,13 @@ def main():
         {"type": "cta", "text": selected_cta}
     ]
 
-    # Load Poppins fonts
     try:
         font_title = ImageFont.truetype(FONT_BOLD_PATH, 54)
         font_text = ImageFont.truetype(FONT_REG_PATH, 44)
-    except Exception as e:
-        print(f"⚠️ Error loading Poppins fonts: {e}. Falling back to default font.")
+    except Exception:
         font_title = ImageFont.load_default()
         font_text = ImageFont.load_default()
 
-    # Load Logo
     logo_img = None
     if os.path.exists(LOGO_PATH):
         try:
@@ -149,15 +195,11 @@ def main():
             w_percent = (max_logo_height / float(logo_img.size[1]))
             max_logo_width = int((float(logo_img.size[0]) * float(w_percent)))
             logo_img = logo_img.resize((max_logo_width, max_logo_height), Image.Resampling.LANCZOS)
-            print("Loaded logo image.")
-        except Exception as e:
-            print(f"⚠️ Error processing logo.png: {e}. Generating post without logo.")
-    else:
-        print("⚠️ Warning: logo.png not found. Generating post without logo.")
+        except Exception:
+            pass
 
     temp_files = []
 
-    # 5. Create the 7 slides
     for i, slide in enumerate(slides):
         bg = Image.new('RGBA', (width, height), color=bg_color)
         card_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -166,16 +208,12 @@ def main():
         card_margin = 80
         draw_card.rounded_rectangle(
             [(card_margin, card_margin), (width - card_margin, height - card_margin)],
-            radius=40,
-            fill=(255, 255, 255, 25),
-            outline=(255, 255, 255, 90),
-            width=2
+            radius=40, fill=(255, 255, 255, 25), outline=(255, 255, 255, 90), width=2
         )
 
         img = Image.alpha_composite(bg, card_layer).convert('RGB')
         draw = ImageDraw.Draw(img)
 
-        # Progress bar (only on questions, slides index 1 to 5)
         if i > 0 and slide["type"] == "question":
             pb_x_start = card_margin + 60
             pb_x_end = width - card_margin - 60
@@ -183,82 +221,49 @@ def main():
             pb_width = pb_x_end - pb_x_start
             pb_height = 8
 
-            # Full white progress bar background
-            draw.rounded_rectangle(
-                [(pb_x_start, pb_y), (pb_x_end, pb_y + pb_height)],
-                radius=4,
-                fill=(255, 255, 255, 255)
-            )
-
-            # Cover rectangle for progress percentage
+            draw.rounded_rectangle([(pb_x_start, pb_y), (pb_x_end, pb_y + pb_height)], radius=4, fill=(255, 255, 255, 255))
             num_questions = 5
             progress_percent = i / float(num_questions)
             cover_x_start = int(pb_x_start + (pb_width * progress_percent))
 
             if cover_x_start < pb_x_end:
-                draw.rounded_rectangle(
-                    [(cover_x_start, pb_y - 1), (pb_x_end + 1, pb_y + pb_height + 1)],
-                    radius=4,
-                    fill=bg_color
-                )
+                draw.rounded_rectangle([(cover_x_start, pb_y - 1), (pb_x_end + 1, pb_y + pb_height + 1)], radius=4, fill=bg_color)
 
-        # Text wrapping and rendering
         current_font = font_title if slide["type"] in ["title", "cta"] else font_text
         max_text_width = width - (card_margin * 4)
         wrapped_lines = wrap_text(slide["text"], draw, current_font, max_text_width)
 
-        line_heights = []
-        for line in wrapped_lines:
-            bbox = draw.textbbox((0, 0), line, font=current_font)
-            line_heights.append(bbox[3] - bbox[1])
+        line_heights = [draw.textbbox((0, 0), l, font=current_font)[3] - draw.textbbox((0, 0), l, font=current_font)[1] for l in wrapped_lines]
         total_text_height = sum(line_heights) + (20 * (len(wrapped_lines) - 1))
 
-        # Push the text to the top on the CTA slide to clear space for the phone mockup
-        if slide["type"] == "cta":
-            current_y = card_margin + 60
-        else:
-            current_y = (height - total_text_height) / 2
+        current_y = card_margin + 60 if slide["type"] == "cta" else (height - total_text_height) / 2
 
-        for idx_line, line in enumerate(wrapped_lines):
+        for line in wrapped_lines:
             bbox = draw.textbbox((0, 0), line, font=current_font)
             text_w = bbox[2] - bbox[0]
             current_x = (width - text_w) / 2
             draw.text((current_x, current_y), line, fill='#FFFFFF', font=current_font)
             current_y += (bbox[3] - bbox[1]) + 20
 
-        # Paste logo (only on non-CTA slides)
         if logo_img and slide["type"] != "cta":
             logo_x = int((width - logo_img.size[0]) / 2)
             logo_y = height - 235
             img.paste(logo_img, (logo_x, logo_y), logo_img)
 
-        # Paste Phone Mockup (only on CTA slide)
         if slide["type"] == "cta" and os.path.exists(MOCKUP_PATH):
             try:
                 mockup_img = Image.open(MOCKUP_PATH).convert('RGBA')
-                
-                # Crop mockup to show only the top 69% of the height
-                # This crops out Safari search bar, navigation bar, and cable/background
-                width_orig, height_orig = mockup_img.size
-                crop_box = (0, 0, width_orig, int(height_orig * 0.69))
-                mockup_img = mockup_img.crop(crop_box)
-                
-                # Scale the cropped image to fit beautifully (Increased to 790px height)
-                max_mockup_height = 790
-                w_percent = (max_mockup_height / float(mockup_img.size[1]))
-                max_mockup_width = int((float(mockup_img.size[0]) * float(w_percent)))
-                mockup_img = mockup_img.resize((max_mockup_width, max_mockup_height), Image.Resampling.LANCZOS)
-                
-                # Center horizontally and sit perfectly flush at the bottom
+                w_orig, h_orig = mockup_img.size
+                mockup_img = mockup_img.crop((0, 0, w_orig, int(h_orig * 0.69)))
+                max_m_height = 790
+                w_percent = (max_m_height / float(mockup_img.size[1]))
+                max_m_width = int((float(mockup_img.size[0]) * float(w_percent)))
+                mockup_img = mockup_img.resize((max_m_width, max_m_height), Image.Resampling.LANCZOS)
                 mockup_x = int((width - mockup_img.size[0]) / 2)
                 mockup_y = height - mockup_img.size[1]
-                
                 img.paste(mockup_img, (mockup_x, mockup_y), mockup_img)
-                print("Pasted cropped phone mockup onto the CTA slide.")
             except Exception as e:
-                print(f"⚠️ Error processing mockup.png on CTA slide: {e}")
-        elif slide["type"] == "cta":
-            print("⚠️ Warning: mockup.png not found. Generating CTA slide without phone mockup.")
+                print(f"⚠️ Mockup error: {e}")
 
         file_name = os.path.join(BASE_DIR, f"{post_id}_slide_{i+1}.png")
         img.save(file_name, "PNG")
@@ -266,85 +271,50 @@ def main():
 
     print("Generated 7 slide images.")
 
-    # 6. Generate Instagram Caption
     hashtag_pool = ['#friendforms', '#socialexperiment', '#perspective', '#humanconnection', '#mindset', '#deepconversations', '#socialgame', '#connection']
     chosen_hashtags = random.sample(hashtag_pool, 4)
     chosen_hashtags.append('#questions')
-    random.shuffle(chosen_hashtags)
     tags_string = " ".join(chosen_hashtags)
 
     captions = [
-        f"Decks like this are meant to expose what we usually leave unsaid. No right or wrong answers here—just raw perspectives.\n\nSwipe through, process the prompts, and let us know your take.\n\n👇 Which slide hit closest to home? Leave your answer below.\n\n—\n{tags_string}",
-        f"A simple card can spark the most unexpected conversations. Some questions are better answered together.\n\nPass the deck around or think it through on your own.\n\n📌 Tag that one friend who absolutely needs to answer Slide 6.\n\n—\n{tags_string}",
-        f"A new set of prompts for your thoughts.\n\nRead. Pause. Answer honestly.\n\n👇 Drop your unfiltered thoughts to the final slide in the comments.\n\n—\n{tags_string}"
+        f"Decks like this are meant to expose what we usually leave unsaid.\n\nSwipe through, process the prompts, and let us know your take.\n\n👇 Which slide hit closest to home?\n\n—\n{tags_string}",
+        f"A simple card can spark the most unexpected conversations.\n\n📌 Tag that one friend who needs to answer Slide 6.\n\n—\n{tags_string}"
     ]
     selected_caption = random.choice(captions)
 
-    # 7. Send to Telegram
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Warning: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID environment variables are not set.")
-        print("Skipping Telegram send. Images are saved locally.")
-        print(f"Caption generated:\n{selected_caption}")
+    if not BUFFER_ACCESS_TOKEN:
+        print("⚠️ Warning: BUFFER_ACCESS_TOKEN no està configurat als Secrets de GitHub.")
+        return
+
+    print("☁️ Pujant imatges a servidor temporal per generar URLs públiques...")
+    public_urls = []
+    for f_path in temp_files:
+        p_url = upload_image_to_temp_host(f_path)
+        public_urls.append(p_url)
+
+    print("📤 Enviant el carrousel a Buffer...")
+    success = post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, selected_caption)
+
+    if success:
+        # Enviem la notificació a Telegram amb la primera slide de mostra
+        telegram_msg = f"🚀 **{post_id} Publicat amb èxit!**\n\n📱 **Destí:** Instagram & TikTok (Buffer)\n\n📝 **Caption:**\n{selected_caption}"
+        send_telegram_notification(telegram_msg, photo_path=temp_files[0])
+
+        rows[current_row_idx][status_col_idx] = 'Done'
+        with open(CSV_PATH, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(rows)
+        print(f"📝 CSV actualitzat! Fila {current_row_idx + 1} ({post_id}) marcada com a 'Done'.")
     else:
-        print("📥 Sending images to Telegram...")
-        telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup"
-        
-        media = []
-        files = {}
-        opened_files = []
-        
-        for idx, file_path in enumerate(temp_files):
-            file_key = f"photo_{idx}"
-            f_handle = open(file_path, 'rb')
-            opened_files.append(f_handle)
-            files[file_key] = f_handle
-            
-            media_item = {
-                "type": "photo",
-                "media": f"attach://{file_key}"
-            }
-            # Attach the caption to the first image of the group
-            if idx == 0:
-                media_item["caption"] = selected_caption
-            media.append(media_item)
+        send_telegram_notification(f"❌ Error en publicar **{post_id}** a Buffer.")
 
-        import json
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "media": json.dumps(media)
-        }
-
-        try:
-            response = requests.post(telegram_url, data=payload, files=files, timeout=30)
-            # Close all opened file handles
-            for f_handle in opened_files:
-                f_handle.close()
-                
-            if response.status_code == 200:
-                print("✅ Successfully sent post to Telegram!")
-            else:
-                print(f"❌ Failed to send to Telegram: Code {response.status_code}, Response: {response.text}")
-                return
-        except Exception as e:
-            for f_handle in opened_files:
-                f_handle.close()
-            print(f"❌ Exception occurred while sending to Telegram: {e}")
-            return
-
-    # Clean up local image files
+    # Neteja de fitxers locals
     for file_path in temp_files:
         try:
             os.remove(file_path)
         except OSError:
             pass
-
-    # 8. Mark post as Done in CSV
-    rows[current_row_idx][status_col_idx] = 'Done'
-    with open(CSV_PATH, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(headers)
-        writer.writerows(rows)
-    print(f"📝 CSV updated! Marked row {current_row_idx + 1} ({post_id}) as 'Done'.")
 
 if __name__ == "__main__":
     main()
