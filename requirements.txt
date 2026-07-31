@@ -1,2 +1,4 @@
 pillow>=9.0.0
 requests>=2.20.0
+moviepy>=1.0.3
+numpy>=1.21.0
