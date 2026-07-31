@@ -238,3 +238,106 @@ Variables d'entorn (Secrets requerits a GitHub Secrets):
   Solució: Assegurar-se que l'script exporti en format `.jpg` (JPEG) i que el canal 
   d'Instagram a Buffer tingui activada la "Direct Publishing".
 ===============================================================================
+
+
+
+Entès. Aquí tens tota la documentació tècnica detallada escrita directament en text pla, a punt per copiar:
+===============================================================================
+ESPECIFICACIÓ TÈCNICA I DOCUMENTACIÓ DEL PROJECTE
+FormFriends Social Media Bot
+Data d'última actualització: Juliol 2026
+Versió de l'Script: 3.0 (Dual-Pipeline: Carrousels PIL + Reels/Shorts ImageSequenceClip)
+Estat del Sistema: Producció / Actiu
+Repositori: https://github.com/rjydly/FormFriends-Posts (PÚBLIC)
+RESUM I PROPÒSIT DEL PROJECTE
+El projecte "FormFriends-Posts" és un sistema d'automatització d'extrem a extrem (End-to-End Automated Content Pipeline) basat en GitHub Actions. Està dissenyat per a operar en dos canals paral·lels de publicació a xarxes socials (Instagram, TikTok i YouTube) a través de la GraphQL API de Buffer, gestionant el control d'estat localment mitjançant fitxers CSV del repositori i enviant alertes a Telegram.
+Els dos canals operatius són:
+Pipeline d'Imatges (Carrousels 1:1, 7 slides estàtiques).
+Pipeline de Vídeo (Reels/Shorts/TikTok 9:16, 50s, àudio fusionat i animacions).
+ESTRUCTURA DELS FITXERS DEL REPOSITORI
+/ (Arrel del Repositori)
+├── .github/
+│ └── workflows/
+│ ├── post_workflow.yml # Workflow GitHub Actions per a Carrousels
+│ └── video_workflow.yml # Workflow GitHub Actions per a Vídeos 9:16
+├── public_slides/ # CDN local de sortida de mitjans (.jpg, .mp4)
+├── music/ # Directori de pistes de fons per a vídeos (.mp3, .wav)
+├── generate_and_send.py # Script principal de Carrousels d'Imatges
+├── generate_and_send_video.py # Script principal de Generació de Vídeo
+├── posts.csv # DB local de Carrousels (Status: Done)
+├── video_posts.csv # DB local de Vídeos (Status: Done)
+├── logo.png # Isotip RGBA de la marca
+├── mockup.png # Maqueta d'iPhone per a slide CTA
+├── Poppins-Bold.ttf # Font tipogràfica (descarregada si no hi és)
+├── Poppins-Regular.ttf # Font tipogràfica (descarregada si no hi és)
+└── requirements.txt # Pillow, Requests, MoviePy, NumPy
+PIPELINE 1: CARROUSELS D'IMATGES (generate_and_send.py)
+Propòsit: Generar i publicar 7 diapositives quadrades (1080x1080 px).
+Format d'exportació: JPEG (.jpg, qualitat 95%) per compatibilitat amb l'API de publicació directa d'Instagram (Meta Graph API rebutja fitxers .png).
+Diapositiva 7 (CTA): Renderitza un mockup de mòbil a Y=390px, retallat al 70% vertical, centrat horitzontalment a 550px d'amplada per a una composició neta.
+Exclusió de YouTube: Com que YouTube no suporta carrousels d'imatges estàtiques, la funció post_to_buffer filtra i omet de manera explícita els canals amb service_name que contingui "youtube" per evitar errors de validació a l'API.
+PIPELINE 2: REELS, TIKTOKS I SHORTS DE VÍDEO (generate_and_send_video.py)
+El script de vídeo genera una composició vertical de 50 segons de durada a 30 FPS.
+4.1 Especificacions de Temps i Estructura:
+FPS: 30 fotogrames per segon (Límit de rendiment per a Runners de GitHub Actions: 2 vCPUs i 7 GB de RAM. Un FPS superior, com 60 FPS, excedeix el consum de CPU/RAM).
+Durada total: 50.0 segons de vídeo.
+Slide 1 (Portada): 5.0 segons.
+Slides 2 a 6 (Preguntes): 9.0 segons cadascuna.
+Transició / Overlap: 0.5 segons definits per a la fusió de color i canvi de text.
+4.2 Lògica de Generació de Fotogrames (Pillow RGBA):
+En lloc de delegar el rendiment a MoviePy, tota la generació d'imatges es fa a nivell de codi de manera lineal, afegint els fotogrames resultants a una llista de memòria (all_frames) convertits a matrius NumPy RGB (np.array).
+Per a cada Slide i cada fotograma f_idx en el temps t = f_idx / fps:
+Fons Dinàmic (Color Merge):
+Si t < duration - 0.5: El color de fons és el color HEX de la slide actual (current_bg_hex).
+Si t >= duration - 0.5: Es calcula el factor d'interpolació k = (t - t_start) / 0.5. El fons es calcula fent una barreja lineal d'RGB cap al color de la següent slide (next_bg_hex).
+Text Dinàmic (Fade In / Fade Out):
+El text de les preguntes es renderitza en una capa RGBA independent.
+Primers 0.5s: L'opacitat del text puja de 0 a 255 (Fade-In).
+Últims 0.5s: L'opacitat del text baixa de 255 a 0 (Fade-Out).
+El marc de la targeta translúcida, el nom "FormFriends" i el logo de la marca es mantenen estàtics amb opacitat màxima constant durant tot el clip.
+Barra de Progrés Superior:
+Fons de la barra (Track): Sempre visible, cantonades arrodonides, fill (255, 255, 255, 70).
+Barra que s'omple (Fill): Creix d'esquerra a dreta en funció del progrés t / (duration - 0.5).
+En els últims 0.5s de transició de la slide, el progrés es manté fix al 100%, però l'opacitat del seu color blanc disminueix linealment de 255 a 0 (Fade-Out), permetent un reinici net a la següent slide des del 0%.
+4.3 Compilació del Vídeo i l'Àudio (MoviePy):
+Seqüència: Es crea el clip principal de vídeo a partir de la llista de fotogrames: clip = ImageSequenceClip(all_frames, fps=30).
+Workaround d'Àudio: Per evitar el problema del silenci produït per MoviePy en servidors headless (on la fusió directa d'imatge i so no es codifica bé), s'inicialitza l'àudio mitjançant un mesclador multicanal de CompositeAudioClip: clip = clip.set_audio(CompositeAudioClip([audio.set_start(0)]).set_duration(total_duration))
+Exportació: Es renderitza el fitxer a 30 FPS fent servir: codec="libx264", audio_codec="aac", temp_audiofile="temp-audio.mp3", remove_temp=True.
+SANEJAMENT D'ÀUDIO I SOLUCIÓ DE PROBLEMES DE DESCODIFICACIÓ
+Els fitxers descarregats d'internet de vegades tenen capçaleres trencades (per exemple, M4A o WAV rebatejats com a .mp3), la qual cosa bloqueja el demuxer d'FFmpeg amb l'error: Failed to find two consecutive MPEG audio frames.
+El script de vídeo implementa una arquitectura defensiva:
+validate_audio_file(file_path): Comprova si la cançó té un pes superior a 1KB i que no sigui un fitxer de text de tipus "Git LFS Pointer" (error típic quan no es configura correctament la descàrrega de binaris a GitHub Actions).
+clean_and_normalize_audio(input_path, output_path): S'executa FFmpeg des de línia de comandes com a subprocessos per re-codificar l'àudio a un MP3 estàndard amb freqüència de mostreig de 44.1kHz, Stereo i 192kbps abans de ser lliurat a MoviePy. Això garanteix un flux d'entrada òptim i lliure d'errors.
+INTEGRACIÓ AMB BUFFER GRAPHQL API (APIs & METADATA RULES)
+Endpoint oficial: https://api.buffer.com
+Autenticació: Header Authorization: Bearer <BUFFER_ACCESS_TOKEN>
+6.1 Mutació i Metadades Obligatòries:
+TikTok: S'envia sense cap tipus de metadada.
+Instagram Reels: S'ha d'enviar metadada tipus "reel":
+"metadata": { "instagram": { "type": "reel", "shouldShareToFeed": true } }
+YouTube Shorts: Perquè l'API de publicació de YouTube a Buffer no rebutgi la petició de creació de vídeo, s'HA D'INCLOURE OBLIGATÒRIAMENT el camp title a l'objecte de metadades youtube:
+"metadata": { "youtube": { "title": "<titol_video>", "privacy": "public" } }
+El títol es llegeix de la columna Slide_1_Title del CSV i es retalla a un màxim de 95 caràcters per seguretat.
+GITHUB ACTIONS I WORKFLOW DE COMPILACIÓ
+7.1 Workflow d'Imatges (post_workflow.yml):
+Cron d'execució: 0 8 * * *, 0 14 * * *, 0 20 * * * (UTC).
+Executa generate_and_send.py.
+7.2 Workflow de Vídeo (video_workflow.yml):
+Cron d'execució: 0 11 * * *, 0 17 * * * (UTC).
+Descarrega binaris reals de Git LFS utilitzant lfs: true al pas checkout@v4.
+Installa FFmpeg a nivell de sistema en el runner d'Ubuntu.
+Executa generate_and_send_video.py.
+7.3 Seguretat de publicació (TEST_MODE):
+El script de vídeo disposa de la variable global TEST_MODE = True.
+Si és True, compila el vídeo, s'omet la publicació a Buffer, s'envia l'MP4 complet a Telegram com a document de qualitat i s'actualitza el CSV local.
+Si és False, fa la publicació real a xarxes socials i l'allotjament de fitxers.
+NOTIFICACIONS A TELEGRAM (HTML & Video Documents)
+El bot utilitza l'API oficial de Telegram:
+Per a imatges (Carrousels): Envia un format de missatge HTML amb la foto de portada com a previsualització.
+Per a vídeos: Envia el fitxer final renderitzat com a document (sendVideo / sendDocument) per evitar la compressió de vídeo de Telegram, facilitant la visualització i descàrrega de proves amb la màxima fidelitat cromàtica i de so.
+GUIA DE CONFIGURACIÓ RÀPIDA DE CÒDECS I DEPENDÈNCIES PER A IAS
+Si s'ha de mantenir o re-escriure el codi:
+El fitxer de requisits (requirements.txt) HA de tenir fixada la versió: moviepy==1.0.3 (les versions 2.0+ de MoviePy canvien la jerarquia de mòduls, eliminen moviepy.editor i causen errors d'importació en l'entorn de GitHub).
+Utilitza sempre np.array(image.convert('RGB')) per passar d'un objecte PIL a un array que ImageSequenceClip sàpiga llegir com a fotograma vàlid.
+La composició d'àudio s'ha d'aplicar sempre sobre la pista de vídeo concatenada final, mai sobre els clips infants abans d'unir-los, per evitar pèrdues de sincronització.
+===============================================================================
