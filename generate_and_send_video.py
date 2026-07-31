@@ -7,7 +7,12 @@ import subprocess
 import html
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import VideoClip, AudioFileClip, concatenate_videoclips, concatenate_audioclips
+
+# Importació intel·ligent compatible amb MoviePy v1 i v2
+try:
+    from moviepy.editor import VideoClip, AudioFileClip, concatenate_videoclips, concatenate_audioclips
+except ModuleNotFoundError:
+    from moviepy import VideoClip, AudioFileClip, concatenate_videoclips, concatenate_audioclips
 
 # ========================================================
 # CONFIGURACIÓ I RUTES
@@ -465,14 +470,24 @@ def main():
     if music_file:
         try:
             audio = AudioFileClip(music_file)
+            subclip_fn = getattr(audio, "subclip", getattr(audio, "subclipped", None))
+
             if audio.duration < total_duration:
                 n_loops = int(np.ceil(total_duration / audio.duration))
-                audio = concatenate_audioclips([audio] * n_loops).subclip(0, total_duration)
+                audio = concatenate_audioclips([audio] * n_loops)
+                if subclip_fn:
+                    audio = subclip_fn(0, total_duration)
             else:
-                audio = audio.subclip(0, total_duration)
+                if subclip_fn:
+                    audio = subclip_fn(0, total_duration)
 
-            audio = audio.audio_fadein(1.0).audio_fadeout(2.0)
-            final_video = final_video.set_audio(audio)
+            if hasattr(audio, "audio_fadein") and hasattr(audio, "audio_fadeout"):
+                audio = audio.audio_fadein(1.0).audio_fadeout(2.0)
+
+            if hasattr(final_video, "set_audio"):
+                final_video = final_video.set_audio(audio)
+            elif hasattr(final_video, "with_audio"):
+                final_video = final_video.with_audio(audio)
         except Exception as e:
             print(f"⚠️ Warning: No s'ha pogut afegir l'àudio: {e}")
 
