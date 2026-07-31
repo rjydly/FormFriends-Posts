@@ -299,6 +299,35 @@ def validate_audio_file(file_path):
     return True, "OK"
 
 
+def clean_and_normalize_audio(input_path, output_path):
+    """
+    Saneja i re-codifica directament l'àudio amb FFmpeg.
+    Això desfà qualsevol format manipulat, defectuós, m4a o wav que es digui '.mp3'
+    i el converteix a un MP3 estàndard i 100% net.
+    """
+    try:
+        print(f"🧹 FFmpeg està sanejant i convertint l'àudio: {os.path.basename(input_path)}")
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-vn",                  # Desactivar vídeo per si té track de caràtula
+            "-ar", "44100",         # Freqüència de mostreig estàndard
+            "-ac", "2",             # Canals Stereo
+            "-b:a", "192k",         # Bitrate recomanat
+            output_path
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if result.returncode == 0:
+            print("✨ Sanejament d'àudio per consola de FFmpeg completat correctament!")
+            return True
+        else:
+            print(f"❌ FFmpeg ha fallat en codificar l'àudio: {result.stderr}")
+            return False
+    except Exception as e:
+        print(f"❌ Error executant comanda de sanejament de FFmpeg: {e}")
+        return False
+
+
 def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, header_text, main_text, font_title, font_text, logo_img=None, duration=9.0, is_title=False):
     card_margin = 80
     top_margin = 220
@@ -477,6 +506,7 @@ def main():
         except Exception:
             pass
 
+    # Generació de clips amb fons "Merge", text fade i barra blanca animada
     video_clips = []
     fps = 24
 
@@ -501,16 +531,16 @@ def main():
     total_duration = final_video.duration
 
     # ========================================================
-    # PROCESSAMENT I VALIDACIÓ D'ÀUDIO
+    # SANEJAMENT D'ÀUDIO INTEGRAT I DIRECTE
     # ========================================================
     music_file = None
     music_filename = "Cap cançó trobada ⚠️"
+    clean_audio_path = os.path.join(PUBLIC_VIDEOS_DIR, "clean_music.mp3")
 
     if os.path.exists(MUSIC_DIR):
         possible_tracks = [os.path.join(MUSIC_DIR, f) for f in os.listdir(MUSIC_DIR) if f.lower().endswith(('.mp3', '.m4a', '.wav'))]
-        print(f"📂 Arxius trobats a music/: {[os.path.basename(p) for p in possible_tracks]}")
+        print(f"📂 Arxius detectats a la carpeta music/: {[os.path.basename(p) for p in possible_tracks]}")
 
-        # Filtrar només cançons que siguin fitxers d'àudio reals (i no punters LFS)
         valid_tracks = []
         for track in possible_tracks:
             is_valid, reason = validate_audio_file(track)
@@ -520,22 +550,33 @@ def main():
                 print(f"⚠️ Atenció amb {os.path.basename(track)}: {reason}")
 
         if valid_tracks:
-            music_file = random.choice(valid_tracks)
-            music_filename = os.path.basename(music_file)
-            print(f"🎵 Cançó vàlida triada: {music_filename}")
+            chosen_track = random.choice(valid_tracks)
+            
+            # SANEJAR EL FITXER TRIA AMB FFMPEG DIRECTE
+            if clean_and_normalize_audio(chosen_track, clean_audio_path):
+                music_file = clean_audio_path
+                music_filename = os.path.basename(chosen_track)
+                print(f"🎵 Àudio sanejat perfectament a clean_music.mp3 (Procedent de: {music_filename})")
+            else:
+                print("❌ Ha fallat el sanejament de la cançó, es provarà de carregar l'original...")
+                music_file = chosen_track
+                music_filename = os.path.basename(chosen_track) + " (Original sense sanejar)"
         else:
-            music_filename = "Cap cançó és un fitxer d'àudio vàlid (comprova Git LFS)"
+            music_filename = "Cap cançó és vàlida (comprova els arxius o Git LFS)"
 
     if music_file:
         try:
             audio_clip = AudioFileClip(music_file)
-            print(f"  └─ Durada de la cançó: {audio_clip.duration:.2f}s (Vídeo: {total_duration:.2f}s)")
+            subclip_fn = getattr(audio_clip, "subclip", getattr(audio_clip, "subclipped", None))
 
-            if audio_clip.duration > total_duration:
-                audio_clip = audio_clip.subclip(0, total_duration)
-            else:
+            if audio_clip.duration < total_duration:
                 n_loops = int(np.ceil(total_duration / audio_clip.duration))
-                audio_clip = concatenate_audioclips([audio_clip] * n_loops).subclip(0, total_duration)
+                audio_clip = concatenate_audioclips([audio_clip] * n_loops)
+                if subclip_fn:
+                    audio_clip = subclip_fn(0, total_duration)
+            else:
+                if subclip_fn:
+                    audio_clip = subclip_fn(0, total_duration)
 
             if hasattr(audio_clip, "audio_fadein") and hasattr(audio_clip, "audio_fadeout"):
                 audio_clip = audio_clip.audio_fadein(1.0).audio_fadeout(2.0)
@@ -544,14 +585,15 @@ def main():
                 audio_clip = audio_clip.volumex(1.0)
 
             final_video.audio = audio_clip
-            print("🔊 Àudio assignat directament a final_video.audio!")
+            print("🔊 Àudio final enllaçat correctament a final_video!")
         except Exception as e:
-            print(f"❌ Error carregant l'àudio amb MoviePy: {e}")
-            music_filename += f" (Error FFmpeg: {e})"
+            print(f"❌ Error carregant l'àudio a MoviePy: {e}")
+            music_filename += f" (Error final: {e})"
 
     output_filename = os.path.join(PUBLIC_VIDEOS_DIR, f"{video_id}.mp4")
-    print(f"🎥 Renderitzant vídeo MP4 final amb àudio ({total_duration}s)...")
-
+    print(f"🎥 Renderitzant vídeo MP4 final amb àudio integrat i transicions ({total_duration}s)...")
+    
+    # Exportació MP4 amb àudio forçat i intermediate mp3
     final_video.write_videofile(
         output_filename,
         fps=fps,
@@ -564,22 +606,25 @@ def main():
         threads=4
     )
 
-    print("✅ Vídeo MP4 renderitzat amb èxit!")
+    print("✅ Vídeo MP4 generat amb èxit!")
 
     hashtag_pool = ['#formfriends', '#couples', '#relationshipquestions', '#deepconversations', '#coupleschallenge', '#questionsforcouples']
     tags_string = " ".join(random.sample(hashtag_pool, 4))
     caption = f"{video_data.get('Slide_1_Title', '')}\n\nSave this for your next late night talk with your person. ✨\n\n—\n{tags_string}"
 
     if TEST_MODE:
+        # ========================================================
+        # MODE PROVA: ENVIAMENT DIRECTE A TELEGRAM
+        # ========================================================
         title_text = html.escape(video_data.get('Slide_1_Title', ''))
         telegram_msg = (
-            f"🎬 <b>[MODE PROVA] {video_id} generat!</b>\n\n"
+            f"🎬 <b>[MODE PROVA] {video_id} generat amb so!</b>\n\n"
             f"📖 <b>Portada:</b> {title_text}\n"
             f"🎵 <b>Música utilitzada:</b> {music_filename}\n"
             f"🏷️ <b>Hashtags:</b> {tags_string}\n\n"
-            f"<i>Nota: Obre el vídeo a pantalla completa a Telegram i activa la icona de l'altaveu si està silenciat!</i>"
+            f"<i>Nota: Obre el vídeo a pantalla completa a Telegram i recorda activar l'altaveu si no se sent de fons!</i>"
         )
-        print("📲 Mode Prova: Enviant vídeo a Telegram per a la teva revisió...")
+        print("📲 Mode Prova: Enviant vídeo a Telegram per a la teva demana...")
         send_telegram_video_notification(telegram_msg, output_filename)
 
         rows[current_row_idx][status_col_idx] = 'Done'
@@ -590,6 +635,9 @@ def main():
         print(f"📝 CSV actualitzat! Fila {current_row_idx + 1} ({video_id}) marcada com a 'Done'.")
 
     else:
+        # ========================================================
+        # MODE PRODUCCIÓ: PUBLICACIÓ A XARXES SOCIALS VIA BUFFER
+        # ========================================================
         if not BUFFER_ACCESS_TOKEN:
             print("⚠️ Warning: BUFFER_ACCESS_TOKEN no configurat als Secrets.")
             return
