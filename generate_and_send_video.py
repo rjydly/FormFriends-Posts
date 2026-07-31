@@ -382,7 +382,7 @@ def main():
     print(f"🎬 Generant vídeo per a {video_id} (Mode Prova = {TEST_MODE})...")
 
     width, height = 1080, 1920
-    fps = 24  # Els vídeos d'imatge i fons es renderitzen de forma fluida i optimitzada a 24fps
+    fps = 60  # Els vídeos d'imatge i fons es renderitzen de forma fluida i optimitzada a 60fps
 
     dark_colors = [
         '#101520', '#161F2B', '#121824', '#1A2A30', '#181A1B',
