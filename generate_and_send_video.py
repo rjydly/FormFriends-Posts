@@ -34,7 +34,6 @@ FONT_REG_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Reg
 BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
 
 FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
@@ -57,6 +56,23 @@ def find_file_case_insensitive(filename):
         if os.path.exists(path):
             return path
     return None
+
+
+def hex_to_rgb(hex_str):
+    hex_str = hex_str.lstrip('#')
+    return tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4))
+
+
+def interpolate_color(color1_hex, color2_hex, factor):
+    """Barreja/fusiona dos colors en format HEX segons un factor entre 0.0 i 1.0"""
+    r1, g1, b1 = hex_to_rgb(color1_hex)
+    r2, g2, b2 = hex_to_rgb(color2_hex)
+    
+    r = int(r1 + (r2 - r1) * factor)
+    g = int(g1 + (g2 - g1) * factor)
+    b = int(b1 + (b2 - b1) * factor)
+    
+    return (r, g, b)
 
 
 def wrap_text(text, draw, font, max_width):
@@ -267,98 +283,117 @@ def post_video_to_buffer(token, video_url, caption):
     return all_success
 
 
-def render_base_slide(width, height, bg_color, header_text, main_text, font_title, font_text, logo_img=None, is_title=False):
-    """Genera la imatge base de la targeta en format RGBA per mantenir la transparència neta"""
-    bg = Image.new('RGBA', (width, height), color=bg_color)
-
-    card_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-    draw_card = ImageDraw.Draw(card_layer)
+def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, header_text, main_text, font_title, font_text, logo_img=None, duration=9.0, is_title=False):
+    """
+    Renders a slide clip with:
+    - Background color smoothly merging to next_bg_hex in the last 0.5s.
+    - Text fading in at start (0.5s) and fading out at end (0.5s).
+    - Animated progress bar that fills up and then fades out its white fill at the end.
+    """
     card_margin = 80
     top_margin = 220
     bottom_margin = 200
-
-    draw_card.rounded_rectangle(
-        [(card_margin, top_margin), (width - card_margin, height - bottom_margin)],
-        radius=40, fill=(255, 255, 255, 20), outline=(255, 255, 255, 80), width=2
-    )
-
-    img = Image.alpha_composite(bg, card_layer)
-    draw = ImageDraw.Draw(img)
-
-    # 1. Capçalera superior ("FormFriends")
-    bbox_h = draw.textbbox((0, 0), header_text, font=font_title)
-    h_w = bbox_h[2] - bbox_h[0]
-    draw.text(((width - h_w) / 2, 260), header_text, fill='#FFFFFF', font=font_title)
-
-    # 2. Text Principal
-    current_font = font_title if is_title else font_text
-    max_text_w = width - (card_margin * 4)
-    wrapped_lines = wrap_text(main_text, draw, current_font, max_text_w)
-
-    line_heights = [draw.textbbox((0, 0), l, font=current_font)[3] - draw.textbbox((0, 0), l, font=current_font)[1] for l in wrapped_lines]
-    total_text_h = sum(line_heights) + (24 * (len(wrapped_lines) - 1))
-
-    current_y = (height - total_text_h) / 2
-
-    for line in wrapped_lines:
-        bbox = draw.textbbox((0, 0), line, font=current_font)
-        text_w = bbox[2] - bbox[0]
-        current_x = (width - text_w) / 2
-        draw.text((current_x, current_y), line, fill='#FFFFFF', font=current_font)
-        current_y += (bbox[3] - bbox[1]) + 24
-
-    # 3. Logo inferior
-    if logo_img:
-        logo_x = int((width - logo_img.size[0]) / 2)
-        logo_y = height - 360
-        img.paste(logo_img, (logo_x, logo_y), logo_img)
-
-    return img
-
-
-def create_slide_clip_with_progress_bar(base_rgba_image, duration, fps=24):
-    """Dibuixa la barra de progrés en capes RGBA per a un animat perfecte i fluid"""
-    w, h = base_rgba_image.size
+    trans_duration = 0.5  # Durada de la transició (0.5s)
 
     def make_frame(t):
-        progress = min(max(t / duration, 0.0), 1.0)
-        
-        # Capa transparent independent per a la barra de progrés
-        overlay = Image.new('RGBA', (w, h), (0, 0, 0, 0))
-        draw_overlay = ImageDraw.Draw(overlay)
+        # 1. Càlcul de la fusió de color de fons (Merge)
+        t_trans_start = duration - trans_duration
+        if t < t_trans_start:
+            bg_rgb = hex_to_rgb(current_bg_hex)
+            progress = min(1.0, max(0.0, t / t_trans_start))
+            text_alpha = min(255, int(255 * (t / trans_duration)))  # Fade-in inicial del text
+            bar_fill_alpha = 255
+        else:
+            # Durant els últims 0.5s (Transició)
+            k = (t - t_trans_start) / trans_duration
+            k = min(1.0, max(0.0, k))
+
+            # Barreja progressiva cap al següent color de fons (Merge)
+            bg_rgb = interpolate_color(current_bg_hex, next_bg_hex, k)
+
+            # Fade-out del text de la frase
+            text_alpha = int(255 * (1.0 - k))
+
+            # Barra de progrés al 100%, però la barra blanca fa Fade-Out
+            progress = 1.0
+            bar_fill_alpha = int(255 * (1.0 - k))
+
+        # 2. Creació del fons amb el color fusionat
+        bg = Image.new('RGBA', (width, height), color=bg_rgb)
+
+        # 3. Dibuix de la targeta translúcida central (estàtica)
+        card_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        draw_card = ImageDraw.Draw(card_layer)
+        draw_card.rounded_rectangle(
+            [(card_margin, top_margin), (width - card_margin, height - bottom_margin)],
+            radius=40, fill=(255, 255, 255, 20), outline=(255, 255, 255, 80), width=2
+        )
+        canvas = Image.alpha_composite(bg, card_layer)
+
+        # 4. Capçalera superior i Logo (estàtics)
+        header_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        draw_header = ImageDraw.Draw(header_layer)
+        bbox_h = draw_header.textbbox((0, 0), header_text, font=font_title)
+        h_w = bbox_h[2] - bbox_h[0]
+        draw_header.text(((width - h_w) / 2, 260), header_text, fill='#FFFFFF', font=font_title)
+
+        if logo_img:
+            logo_x = int((width - logo_img.size[0]) / 2)
+            logo_y = height - 360
+            header_layer.paste(logo_img, (logo_x, logo_y), logo_img)
+
+        canvas = Image.alpha_composite(canvas, header_layer)
+
+        # 5. Text principal de la pregunta (amb Fade-In / Fade-Out d'opacitat)
+        text_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        draw_text = ImageDraw.Draw(text_layer)
+        current_font = font_title if is_title else font_text
+        max_text_w = width - (card_margin * 4)
+        wrapped_lines = wrap_text(main_text, draw_text, current_font, max_text_w)
+
+        line_heights = [draw_text.textbbox((0, 0), l, font=current_font)[3] - draw_text.textbbox((0, 0), l, font=current_font)[1] for l in wrapped_lines]
+        total_text_h = sum(line_heights) + (24 * (len(wrapped_lines) - 1))
+        current_y = (height - total_text_h) / 2
+
+        text_color = (255, 255, 255, text_alpha)
+        for line in wrapped_lines:
+            bbox = draw_text.textbbox((0, 0), line, font=current_font)
+            text_w = bbox[2] - bbox[0]
+            current_x = (width - text_w) / 2
+            draw_text.text((current_x, current_y), line, fill=text_color, font=current_font)
+            current_y += (bbox[3] - bbox[1]) + 24
+
+        canvas = Image.alpha_composite(canvas, text_layer)
+
+        # 6. Dibuix de la barra de progrés
+        bar_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        draw_bar = ImageDraw.Draw(bar_layer)
 
         bar_margin = 100
         bar_y = 120
         bar_height = 12
-        max_bar_w = w - (bar_margin * 2)
+        max_bar_w = width - (bar_margin * 2)
 
-        # Fons de la barra (blanc translúcid)
-        draw_overlay.rounded_rectangle(
+        # Barra translúcida de fons (sempre visible)
+        draw_bar.rounded_rectangle(
             [(bar_margin, bar_y), (bar_margin + max_bar_w, bar_y + bar_height)],
             radius=6,
             fill=(255, 255, 255, 70)
         )
 
-        # Barra de progrés que s'omple (blanc intens)
+        # Barra blanca d'omplert (que s'omple i després fa fade-out)
         current_w = int(max_bar_w * progress)
-        if current_w > 6:
-            draw_overlay.rounded_rectangle(
+        if current_w > 6 and bar_fill_alpha > 0:
+            draw_bar.rounded_rectangle(
                 [(bar_margin, bar_y), (bar_margin + current_w, bar_y + bar_height)],
                 radius=6,
-                fill=(255, 255, 255, 255)
+                fill=(255, 255, 255, bar_fill_alpha)
             )
 
-        # Composició de capes RGBA
-        final_frame = Image.alpha_composite(base_rgba_image, overlay)
+        final_frame = Image.alpha_composite(canvas, bar_layer)
         return np.array(final_frame.convert('RGB'))
 
-    clip = VideoClip(make_frame, duration=duration)
-    
-    # Efecte de Fade-In i Fade-Out suau entre targetes (0.3s)
-    if hasattr(clip, "fadein") and hasattr(clip, "fadeout"):
-        clip = clip.fadein(0.3).fadeout(0.3)
-
-    return clip
+    return VideoClip(make_frame, duration=duration)
 
 
 def main():
@@ -411,14 +446,13 @@ def main():
     # Mides 9:16 per a Reels/TikTok/Shorts
     width, height = 1080, 1920
 
-    # Paleta de fons foscos estètics elegants
+    # Paleta de fons foscos estètics
     dark_colors = [
         '#101520', '#161F2B', '#121824', '#1A2A30', '#181A1B',
         '#2C1420', '#1B2A26', '#281E12', '#1E1E28', '#251818',
         '#142028', '#1F1728', '#221915', '#13221C'
     ]
 
-    # Slide 1 portada (5s), Slides 2-6 preguntes (9s cada una)
     slides = [
         {"text": video_data.get('Slide_1_Title', ''), "duration": 5.0, "is_title": True},
         {"text": video_data.get('Slide_2_Question', ''), "duration": 9.0, "is_title": False},
@@ -427,6 +461,9 @@ def main():
         {"text": video_data.get('Slide_5_Question', ''), "duration": 9.0, "is_title": False},
         {"text": video_data.get('Slide_6_Question', ''), "duration": 9.0, "is_title": False},
     ]
+
+    # Triem els colors de fons de les slides per separat per poder fer la fusió "Merge"
+    slide_colors = [random.choice(dark_colors) for _ in slides]
 
     try:
         font_title = ImageFont.truetype(FONT_BOLD_PATH, 58)
@@ -447,23 +484,26 @@ def main():
         except Exception:
             pass
 
-    # Generar clips de vídeo per a cada slide amb la barra de progrés i transicions
+    # Generació de clips amb fons "Merge", text fade i barra branca animada
     video_clips = []
     fps = 24
 
     for i, slide in enumerate(slides):
-        bg_color = random.choice(dark_colors)
+        current_bg_hex = slide_colors[i]
+        # El següent color per a la fusió (si és l'última slide, manté el mateix color)
+        next_bg_hex = slide_colors[i+1] if i < len(slides) - 1 else slide_colors[i]
+
         header_text = "FormFriends"
 
-        base_img = render_base_slide(
-            width, height, bg_color,
+        clip = render_animated_slide_clip(
+            width, height,
+            current_bg_hex, next_bg_hex,
             header_text, slide["text"],
             font_title, font_text,
             logo_img=logo_img,
+            duration=slide["duration"],
             is_title=slide["is_title"]
         )
-
-        clip = create_slide_clip_with_progress_bar(base_img, slide["duration"], fps=fps)
         video_clips.append(clip)
 
     final_video = concatenate_videoclips(video_clips)
@@ -502,7 +542,7 @@ def main():
             print(f"⚠️ Warning: No s'ha pogut afegir l'àudio: {e}")
 
     output_filename = os.path.join(PUBLIC_VIDEOS_DIR, f"{video_id}.mp4")
-    print(f"🎥 Renderitzant vídeo MP4 final amb transicions i barra fluida ({total_duration}s)...")
+    print(f"🎥 Renderitzant vídeo MP4 final amb efectes de merge, text fade i barra fluida ({total_duration}s)...")
     final_video.write_videofile(
         output_filename,
         fps=fps,
