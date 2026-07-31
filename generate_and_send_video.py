@@ -283,43 +283,46 @@ def post_video_to_buffer(token, video_url, caption):
     return all_success
 
 
+def validate_audio_file(file_path):
+    """Comprova si el fitxer és un àudio real i no un punter de Git LFS o fitxer buit/corromput"""
+    if not os.path.exists(file_path):
+        return False, "Fitxer no trobat"
+    
+    file_size = os.path.getsize(file_path)
+    if file_size < 1000:
+        with open(file_path, 'r', errors='ignore') as f:
+            content = f.read(200)
+            if "git-lfs" in content or "version https://" in content:
+                return False, "És un punter de Git LFS (text) en comptes d'àudio real. Assegura't de tenir lfs: true al workflow."
+        return False, f"Fitxer massa petit ({file_size} bytes)."
+
+    return True, "OK"
+
+
 def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, header_text, main_text, font_title, font_text, logo_img=None, duration=9.0, is_title=False):
-    """
-    Renders a slide clip with:
-    - Background color smoothly merging to next_bg_hex in the last 0.5s.
-    - Text fading in at start (0.5s) and fading out at end (0.5s).
-    - Animated progress bar that fills up and then fades out its white fill at the end.
-    """
     card_margin = 80
     top_margin = 220
     bottom_margin = 200
-    trans_duration = 0.5  # Durada de la transició (0.5s)
+    trans_duration = 0.5
 
     def make_frame(t):
         t_trans_start = duration - trans_duration
         if t < t_trans_start:
             bg_rgb = hex_to_rgb(current_bg_hex)
             progress = min(1.0, max(0.0, t / t_trans_start))
-            text_alpha = min(255, int(255 * (t / trans_duration)))  # Fade-in inicial del text
+            text_alpha = min(255, int(255 * (t / trans_duration)))
             bar_fill_alpha = 255
         else:
             k = (t - t_trans_start) / trans_duration
             k = min(1.0, max(0.0, k))
 
-            # Fusió cromàtica cap al següent color
             bg_rgb = interpolate_color(current_bg_hex, next_bg_hex, k)
-
-            # Fade-out del text de la frase
             text_alpha = int(255 * (1.0 - k))
-
-            # Barra al 100%, però la barra blanca fa Fade-Out
             progress = 1.0
             bar_fill_alpha = int(255 * (1.0 - k))
 
-        # 1. Fons fusionat
         bg = Image.new('RGBA', (width, height), color=bg_rgb)
 
-        # 2. Targeta central translúcida (estàtica)
         card_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw_card = ImageDraw.Draw(card_layer)
         draw_card.rounded_rectangle(
@@ -328,7 +331,6 @@ def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, heade
         )
         canvas = Image.alpha_composite(bg, card_layer)
 
-        # 3. Capçalera i Logo (estàtics)
         header_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw_header = ImageDraw.Draw(header_layer)
         bbox_h = draw_header.textbbox((0, 0), header_text, font=font_title)
@@ -342,7 +344,6 @@ def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, heade
 
         canvas = Image.alpha_composite(canvas, header_layer)
 
-        # 4. Text principal de la frase (amb Fade-In / Fade-Out)
         text_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw_text = ImageDraw.Draw(text_layer)
         current_font = font_title if is_title else font_text
@@ -363,7 +364,6 @@ def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, heade
 
         canvas = Image.alpha_composite(canvas, text_layer)
 
-        # 5. Barra de progrés superior
         bar_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw_bar = ImageDraw.Draw(bar_layer)
 
@@ -372,14 +372,12 @@ def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, heade
         bar_height = 12
         max_bar_w = width - (bar_margin * 2)
 
-        # Barra translúcida de fons (sempre visible)
         draw_bar.rounded_rectangle(
             [(bar_margin, bar_y), (bar_margin + max_bar_w, bar_y + bar_height)],
             radius=6,
             fill=(255, 255, 255, 70)
         )
 
-        # Barra blanca d'omplert (que s'omple i després fa fade-out)
         current_w = int(max_bar_w * progress)
         if current_w > 6 and bar_fill_alpha > 0:
             draw_bar.rounded_rectangle(
@@ -441,10 +439,8 @@ def main():
     video_id = video_data.get('Video_ID', f"Video_{current_row_idx + 1}")
     print(f"🎬 Generant vídeo per a {video_id} (Mode Prova = {TEST_MODE})...")
 
-    # Mides 9:16 per a Reels/TikTok/Shorts
     width, height = 1080, 1920
 
-    # Paleta de fons foscos estètics
     dark_colors = [
         '#101520', '#161F2B', '#121824', '#1A2A30', '#181A1B',
         '#2C1420', '#1B2A26', '#281E12', '#1E1E28', '#251818',
@@ -460,7 +456,6 @@ def main():
         {"text": video_data.get('Slide_6_Question', ''), "duration": 9.0, "is_title": False},
     ]
 
-    # Triem els colors de fons de les slides per separat per poder fer la fusió "Merge"
     slide_colors = [random.choice(dark_colors) for _ in slides]
 
     try:
@@ -482,7 +477,6 @@ def main():
         except Exception:
             pass
 
-    # Generació de clips amb fons "Merge", text fade i barra blanca animada
     video_clips = []
     fps = 24
 
@@ -506,53 +500,64 @@ def main():
     final_video = concatenate_videoclips(video_clips)
     total_duration = final_video.duration
 
-    # Selecció i processament de la música de fons de la carpeta music/
+    # ========================================================
+    # PROCESSAMENT I VALIDACIÓ D'ÀUDIO
+    # ========================================================
     music_file = None
+    music_filename = "Cap cançó trobada ⚠️"
+
     if os.path.exists(MUSIC_DIR):
         possible_tracks = [os.path.join(MUSIC_DIR, f) for f in os.listdir(MUSIC_DIR) if f.lower().endswith(('.mp3', '.m4a', '.wav'))]
-        if possible_tracks:
-            music_file = random.choice(possible_tracks)
-            print(f"🎵 Cançó triada per al vídeo: {os.path.basename(music_file)}")
+        print(f"📂 Arxius trobats a music/: {[os.path.basename(p) for p in possible_tracks]}")
+
+        # Filtrar només cançons que siguin fitxers d'àudio reals (i no punters LFS)
+        valid_tracks = []
+        for track in possible_tracks:
+            is_valid, reason = validate_audio_file(track)
+            if is_valid:
+                valid_tracks.append(track)
+            else:
+                print(f"⚠️ Atenció amb {os.path.basename(track)}: {reason}")
+
+        if valid_tracks:
+            music_file = random.choice(valid_tracks)
+            music_filename = os.path.basename(music_file)
+            print(f"🎵 Cançó vàlida triada: {music_filename}")
+        else:
+            music_filename = "Cap cançó és un fitxer d'àudio vàlid (comprova Git LFS)"
 
     if music_file:
         try:
-            audio = AudioFileClip(music_file)
-            subclip_fn = getattr(audio, "subclip", getattr(audio, "subclipped", None))
+            audio_clip = AudioFileClip(music_file)
+            print(f"  └─ Durada de la cançó: {audio_clip.duration:.2f}s (Vídeo: {total_duration:.2f}s)")
 
-            if audio.duration < total_duration:
-                n_loops = int(np.ceil(total_duration / audio.duration))
-                audio = concatenate_audioclips([audio] * n_loops)
-                if subclip_fn:
-                    audio = subclip_fn(0, total_duration)
+            if audio_clip.duration > total_duration:
+                audio_clip = audio_clip.subclip(0, total_duration)
             else:
-                if subclip_fn:
-                    audio = subclip_fn(0, total_duration)
+                n_loops = int(np.ceil(total_duration / audio_clip.duration))
+                audio_clip = concatenate_audioclips([audio_clip] * n_loops).subclip(0, total_duration)
 
-            if hasattr(audio, "audio_fadein") and hasattr(audio, "audio_fadeout"):
-                audio = audio.audio_fadein(1.0).audio_fadeout(2.0)
+            if hasattr(audio_clip, "audio_fadein") and hasattr(audio_clip, "audio_fadeout"):
+                audio_clip = audio_clip.audio_fadein(1.0).audio_fadeout(2.0)
 
-            # Volum normalitzat al 100%
-            if hasattr(audio, "volumex"):
-                audio = audio.volumex(1.0)
+            if hasattr(audio_clip, "volumex"):
+                audio_clip = audio_clip.volumex(1.0)
 
-            if hasattr(final_video, "set_audio"):
-                final_video = final_video.set_audio(audio)
-            elif hasattr(final_video, "with_audio"):
-                final_video = final_video.with_audio(audio)
-            print("🔊 Àudio enllaçat correctament al vídeo MP4!")
+            final_video.audio = audio_clip
+            print("🔊 Àudio assignat directament a final_video.audio!")
         except Exception as e:
-            print(f"⚠️ Warning: No s'ha pogut afegir l'àudio: {e}")
+            print(f"❌ Error carregant l'àudio amb MoviePy: {e}")
+            music_filename += f" (Error FFmpeg: {e})"
 
     output_filename = os.path.join(PUBLIC_VIDEOS_DIR, f"{video_id}.mp4")
-    print(f"🎥 Renderitzant vídeo MP4 final amb àudio i transicions ({total_duration}s)...")
-    
-    # Exportació MP4 amb àudio forçat via temp_audiofile per entorns Linux/GitHub Actions
+    print(f"🎥 Renderitzant vídeo MP4 final amb àudio ({total_duration}s)...")
+
     final_video.write_videofile(
         output_filename,
         fps=fps,
         codec='libx264',
         audio_codec='aac',
-        temp_audiofile='temp-audio.m4a',
+        temp_audiofile='temp-audio.mp3',
         remove_temp=True,
         audio=True,
         preset='fast',
@@ -566,15 +571,13 @@ def main():
     caption = f"{video_data.get('Slide_1_Title', '')}\n\nSave this for your next late night talk with your person. ✨\n\n—\n{tags_string}"
 
     if TEST_MODE:
-        # ========================================================
-        # MODE PROVA: ENVIAMENT DIRECTE A TELEGRAM
-        # ========================================================
         title_text = html.escape(video_data.get('Slide_1_Title', ''))
         telegram_msg = (
             f"🎬 <b>[MODE PROVA] {video_id} generat!</b>\n\n"
             f"📖 <b>Portada:</b> {title_text}\n"
+            f"🎵 <b>Música utilitzada:</b> {music_filename}\n"
             f"🏷️ <b>Hashtags:</b> {tags_string}\n\n"
-            f"<i>Nota: El vídeo no s'ha enviat a Buffer (Mode Prova actiu).</i>"
+            f"<i>Nota: Obre el vídeo a pantalla completa a Telegram i activa la icona de l'altaveu si està silenciat!</i>"
         )
         print("📲 Mode Prova: Enviant vídeo a Telegram per a la teva revisió...")
         send_telegram_video_notification(telegram_msg, output_filename)
@@ -587,9 +590,6 @@ def main():
         print(f"📝 CSV actualitzat! Fila {current_row_idx + 1} ({video_id}) marcada com a 'Done'.")
 
     else:
-        # ========================================================
-        # MODE PRODUCCIÓ: PUBLICACIÓ A XARXES SOCIALS VIA BUFFER
-        # ========================================================
         if not BUFFER_ACCESS_TOKEN:
             print("⚠️ Warning: BUFFER_ACCESS_TOKEN no configurat als Secrets.")
             return
