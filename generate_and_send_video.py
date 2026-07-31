@@ -268,7 +268,7 @@ def post_video_to_buffer(token, video_url, caption):
 
 
 def render_base_slide(width, height, bg_color, header_text, main_text, font_title, font_text, logo_img=None, is_title=False):
-    """Genera la imatge base de la targeta (sense la barra de progrés)"""
+    """Genera la imatge base de la targeta en format RGBA per mantenir la transparència neta"""
     bg = Image.new('RGBA', (width, height), color=bg_color)
 
     card_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -282,7 +282,7 @@ def render_base_slide(width, height, bg_color, header_text, main_text, font_titl
         radius=40, fill=(255, 255, 255, 20), outline=(255, 255, 255, 80), width=2
     )
 
-    img = Image.alpha_composite(bg, card_layer).convert('RGB')
+    img = Image.alpha_composite(bg, card_layer)
     draw = ImageDraw.Draw(img)
 
     # 1. Capçalera superior ("FormFriends")
@@ -316,39 +316,49 @@ def render_base_slide(width, height, bg_color, header_text, main_text, font_titl
     return img
 
 
-def create_slide_clip_with_progress_bar(base_pil_image, duration, fps=24):
-    """Crea un clip de vídeo on la barra de progrés s'anima automàticament des del 0% al 100%"""
-    w, h = base_pil_image.size
+def create_slide_clip_with_progress_bar(base_rgba_image, duration, fps=24):
+    """Dibuixa la barra de progrés en capes RGBA per a un animat perfecte i fluid"""
+    w, h = base_rgba_image.size
 
     def make_frame(t):
         progress = min(max(t / duration, 0.0), 1.0)
-        frame_img = base_pil_image.copy()
-        draw = ImageDraw.Draw(frame_img)
+        
+        # Capa transparent independent per a la barra de progrés
+        overlay = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+        draw_overlay = ImageDraw.Draw(overlay)
 
         bar_margin = 100
         bar_y = 120
-        bar_height = 10
+        bar_height = 12
         max_bar_w = w - (bar_margin * 2)
 
-        # Fons de la barra (translúcid)
-        draw.rounded_rectangle(
+        # Fons de la barra (blanc translúcid)
+        draw_overlay.rounded_rectangle(
             [(bar_margin, bar_y), (bar_margin + max_bar_w, bar_y + bar_height)],
-            radius=5,
-            fill=(255, 255, 255, 60)
+            radius=6,
+            fill=(255, 255, 255, 70)
         )
 
-        # Barra de progrés omplerta (blanc brillant)
+        # Barra de progrés que s'omple (blanc intens)
         current_w = int(max_bar_w * progress)
-        if current_w > 5:
-            draw.rounded_rectangle(
+        if current_w > 6:
+            draw_overlay.rounded_rectangle(
                 [(bar_margin, bar_y), (bar_margin + current_w, bar_y + bar_height)],
-                radius=5,
+                radius=6,
                 fill=(255, 255, 255, 255)
             )
 
-        return np.array(frame_img.convert('RGB'))
+        # Composició de capes RGBA
+        final_frame = Image.alpha_composite(base_rgba_image, overlay)
+        return np.array(final_frame.convert('RGB'))
 
-    return VideoClip(make_frame, duration=duration)
+    clip = VideoClip(make_frame, duration=duration)
+    
+    # Efecte de Fade-In i Fade-Out suau entre targetes (0.3s)
+    if hasattr(clip, "fadein") and hasattr(clip, "fadeout"):
+        clip = clip.fadein(0.3).fadeout(0.3)
+
+    return clip
 
 
 def main():
@@ -437,7 +447,7 @@ def main():
         except Exception:
             pass
 
-    # Generar clips de vídeo per a cada slide amb la barra de progrés
+    # Generar clips de vídeo per a cada slide amb la barra de progrés i transicions
     video_clips = []
     fps = 24
 
@@ -492,7 +502,7 @@ def main():
             print(f"⚠️ Warning: No s'ha pogut afegir l'àudio: {e}")
 
     output_filename = os.path.join(PUBLIC_VIDEOS_DIR, f"{video_id}.mp4")
-    print(f"🎥 Renderitzant vídeo MP4 final ({total_duration}s)...")
+    print(f"🎥 Renderitzant vídeo MP4 final amb transicions i barra fluida ({total_duration}s)...")
     final_video.write_videofile(
         output_filename,
         fps=fps,
