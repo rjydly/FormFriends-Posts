@@ -269,6 +269,11 @@ def post_to_buffer(token, image_urls, caption):
         service_name = str(channel.get("service", "")).lower()
         channel_display_name = channel.get('displayName') or channel.get('name') or channel_id
 
+        # EXCLUSIÓ: Ignorem els canals de YouTube per a la publicació d'imatges estàtiques
+        if "youtube" in service_name:
+            print(f"ℹ️ Ometent el canal {channel_display_name} ({service_name}) ja que és un carrousel d'imatges estàtiques.")
+            continue
+
         channel_input = {
             "channelId": channel_id,
             "text": caption,
