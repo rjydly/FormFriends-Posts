@@ -8,11 +8,8 @@ import html
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# Importació intel·ligent compatible amb MoviePy v1 i v2
-try:
-    from moviepy.editor import VideoClip, AudioFileClip, concatenate_videoclips, concatenate_audioclips
-except ModuleNotFoundError:
-    from moviepy import VideoClip, AudioFileClip, concatenate_videoclips, concatenate_audioclips
+# Importació de MoviePy utilitzant l'estructura exacta del teu projecte funcional
+from moviepy.editor import ImageSequenceClip, AudioFileClip, CompositeAudioClip, concatenate_audioclips
 
 # ========================================================
 # CONFIGURACIÓ I RUTES
@@ -284,7 +281,6 @@ def post_video_to_buffer(token, video_url, caption):
 
 
 def validate_audio_file(file_path):
-    """Comprova si el fitxer és un àudio real i no un punter de Git LFS o fitxer buit/corromput"""
     if not os.path.exists(file_path):
         return False, "Fitxer no trobat"
     
@@ -300,125 +296,28 @@ def validate_audio_file(file_path):
 
 
 def clean_and_normalize_audio(input_path, output_path):
-    """
-    Saneja i re-codifica directament l'àudio amb FFmpeg.
-    Això desfà qualsevol format manipulat, defectuós, m4a o wav que es digui '.mp3'
-    i el converteix a un MP3 estàndard i 100% net.
-    """
+    """Saneja i re-codifica directament l'àudio amb FFmpeg de forma estàndard i neta"""
     try:
         print(f"🧹 FFmpeg està sanejant i convertint l'àudio: {os.path.basename(input_path)}")
         cmd = [
             "ffmpeg", "-y",
             "-i", input_path,
-            "-vn",                  # Desactivar vídeo per si té track de caràtula
-            "-ar", "44100",         # Freqüència de mostreig estàndard
-            "-ac", "2",             # Canals Stereo
-            "-b:a", "192k",         # Bitrate recomanat
+            "-vn",                  # Desactivar vídeo
+            "-ar", "44100",         # Freqüència estàndard
+            "-ac", "2",             # Stereo
+            "-b:a", "192k",         # Bitrate ideal
             output_path
         ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if result.returncode == 0:
-            print("✨ Sanejament d'àudio per consola de FFmpeg completat correctament!")
+            print("✨ Sanejament de la pista de fons completat correctament!")
             return True
         else:
-            print(f"❌ FFmpeg ha fallat en codificar l'àudio: {result.stderr}")
+            print(f"❌ FFmpeg ha fallat en codificar: {result.stderr}")
             return False
     except Exception as e:
         print(f"❌ Error executant comanda de sanejament de FFmpeg: {e}")
         return False
-
-
-def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, header_text, main_text, font_title, font_text, logo_img=None, duration=9.0, is_title=False):
-    card_margin = 80
-    top_margin = 220
-    bottom_margin = 200
-    trans_duration = 0.5
-
-    def make_frame(t):
-        t_trans_start = duration - trans_duration
-        if t < t_trans_start:
-            bg_rgb = hex_to_rgb(current_bg_hex)
-            progress = min(1.0, max(0.0, t / t_trans_start))
-            text_alpha = min(255, int(255 * (t / trans_duration)))
-            bar_fill_alpha = 255
-        else:
-            k = (t - t_trans_start) / trans_duration
-            k = min(1.0, max(0.0, k))
-
-            bg_rgb = interpolate_color(current_bg_hex, next_bg_hex, k)
-            text_alpha = int(255 * (1.0 - k))
-            progress = 1.0
-            bar_fill_alpha = int(255 * (1.0 - k))
-
-        bg = Image.new('RGBA', (width, height), color=bg_rgb)
-
-        card_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        draw_card = ImageDraw.Draw(card_layer)
-        draw_card.rounded_rectangle(
-            [(card_margin, top_margin), (width - card_margin, height - bottom_margin)],
-            radius=40, fill=(255, 255, 255, 20), outline=(255, 255, 255, 80), width=2
-        )
-        canvas = Image.alpha_composite(bg, card_layer)
-
-        header_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        draw_header = ImageDraw.Draw(header_layer)
-        bbox_h = draw_header.textbbox((0, 0), header_text, font=font_title)
-        h_w = bbox_h[2] - bbox_h[0]
-        draw_header.text(((width - h_w) / 2, 260), header_text, fill='#FFFFFF', font=font_title)
-
-        if logo_img:
-            logo_x = int((width - logo_img.size[0]) / 2)
-            logo_y = height - 360
-            header_layer.paste(logo_img, (logo_x, logo_y), logo_img)
-
-        canvas = Image.alpha_composite(canvas, header_layer)
-
-        text_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        draw_text = ImageDraw.Draw(text_layer)
-        current_font = font_title if is_title else font_text
-        max_text_w = width - (card_margin * 4)
-        wrapped_lines = wrap_text(main_text, draw_text, current_font, max_text_w)
-
-        line_heights = [draw_text.textbbox((0, 0), l, font=current_font)[3] - draw_text.textbbox((0, 0), l, font=current_font)[1] for l in wrapped_lines]
-        total_text_h = sum(line_heights) + (24 * (len(wrapped_lines) - 1))
-        current_y = (height - total_text_h) / 2
-
-        text_color = (255, 255, 255, text_alpha)
-        for line in wrapped_lines:
-            bbox = draw_text.textbbox((0, 0), line, font=current_font)
-            text_w = bbox[2] - bbox[0]
-            current_x = (width - text_w) / 2
-            draw_text.text((current_x, current_y), line, fill=text_color, font=current_font)
-            current_y += (bbox[3] - bbox[1]) + 24
-
-        canvas = Image.alpha_composite(canvas, text_layer)
-
-        bar_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        draw_bar = ImageDraw.Draw(bar_layer)
-
-        bar_margin = 100
-        bar_y = 120
-        bar_height = 12
-        max_bar_w = width - (bar_margin * 2)
-
-        draw_bar.rounded_rectangle(
-            [(bar_margin, bar_y), (bar_margin + max_bar_w, bar_y + bar_height)],
-            radius=6,
-            fill=(255, 255, 255, 70)
-        )
-
-        current_w = int(max_bar_w * progress)
-        if current_w > 6 and bar_fill_alpha > 0:
-            draw_bar.rounded_rectangle(
-                [(bar_margin, bar_y), (bar_margin + current_w, bar_y + bar_height)],
-                radius=6,
-                fill=(255, 255, 255, bar_fill_alpha)
-            )
-
-        final_frame = Image.alpha_composite(canvas, bar_layer)
-        return np.array(final_frame.convert('RGB'))
-
-    return VideoClip(make_frame, duration=duration)
 
 
 def main():
@@ -469,6 +368,7 @@ def main():
     print(f"🎬 Generant vídeo per a {video_id} (Mode Prova = {TEST_MODE})...")
 
     width, height = 1080, 1920
+    fps = 24  # Els vídeos d'imatge i fons es renderitzen de forma fluida i optimitzada a 24fps
 
     dark_colors = [
         '#101520', '#161F2B', '#121824', '#1A2A30', '#181A1B',
@@ -506,32 +406,128 @@ def main():
         except Exception:
             pass
 
-    # Generació de clips amb fons "Merge", text fade i barra blanca animada
-    video_clips = []
-    fps = 24
+    # ========================================================
+    # GENERACIÓ DE LA LLISTA DE FOTOGRAMES (Pillow)
+    # ========================================================
+    all_frames = []
+    card_margin = 80
+    top_margin = 220
+    bottom_margin = 200
+    trans_duration = 0.5
+
+    print("🎨 Renderitzant frames a memòria (disseny estètic + merge + fade)...")
 
     for i, slide in enumerate(slides):
         current_bg_hex = slide_colors[i]
         next_bg_hex = slide_colors[i+1] if i < len(slides) - 1 else slide_colors[i]
+        
+        duration = slide["duration"]
+        is_title = slide["is_title"]
+        num_frames_slide = int(duration * fps)
 
-        header_text = "FormFriends"
+        for f_idx in range(num_frames_slide):
+            t = f_idx / fps
+            t_trans_start = duration - trans_duration
 
-        clip = render_animated_slide_clip(
-            width, height,
-            current_bg_hex, next_bg_hex,
-            header_text, slide["text"],
-            font_title, font_text,
-            logo_img=logo_img,
-            duration=slide["duration"],
-            is_title=slide["is_title"]
-        )
-        video_clips.append(clip)
+            if t < t_trans_start:
+                bg_rgb = hex_to_rgb(current_bg_hex)
+                progress = min(1.0, max(0.0, t / t_trans_start))
+                text_alpha = min(255, int(255 * (t / trans_duration)))  # Fade-In del text
+                bar_fill_alpha = 255
+            else:
+                k = (t - t_trans_start) / trans_duration
+                k = min(1.0, max(0.0, k))
 
-    final_video = concatenate_videoclips(video_clips)
-    total_duration = final_video.duration
+                # Canvi de fons progressiu (Merge)
+                bg_rgb = interpolate_color(current_bg_hex, next_bg_hex, k)
+                
+                # Fade-Out de les lletres
+                text_alpha = int(255 * (1.0 - k))
+                
+                # Barra al 100% de progrés, però iniciant Fade-Out
+                progress = 1.0
+                bar_fill_alpha = int(255 * (1.0 - k))
+
+            # Render de la imatge de fons
+            bg = Image.new('RGBA', (width, height), color=bg_rgb)
+
+            # Targeta central translúcida
+            card_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+            draw_card = ImageDraw.Draw(card_layer)
+            draw_card.rounded_rectangle(
+                [(card_margin, top_margin), (width - card_margin, height - bottom_margin)],
+                radius=40, fill=(255, 255, 255, 20), outline=(255, 255, 255, 80), width=2
+            )
+            canvas = Image.alpha_composite(bg, card_layer)
+
+            # Capçalera "FormFriends" i Logo (Estàtics)
+            header_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+            draw_header = ImageDraw.Draw(header_layer)
+            bbox_h = draw_header.textbbox((0, 0), "FormFriends", font=font_title)
+            h_w = bbox_h[2] - bbox_h[0]
+            draw_header.text(((width - h_w) / 2, 260), "FormFriends", fill='#FFFFFF', font=font_title)
+
+            if logo_img:
+                logo_x = int((width - logo_img.size[0]) / 2)
+                logo_y = height - 360
+                header_layer.paste(logo_img, (logo_x, logo_y), logo_img)
+
+            canvas = Image.alpha_composite(canvas, header_layer)
+
+            # Capa de text (amb fade)
+            text_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+            draw_text = ImageDraw.Draw(text_layer)
+            current_font = font_title if is_title else font_text
+            max_text_w = width - (card_margin * 4)
+            wrapped_lines = wrap_text(slide["text"], draw_text, current_font, max_text_w)
+
+            line_heights = [draw_text.textbbox((0, 0), l, font=current_font)[3] - draw_text.textbbox((0, 0), l, font=current_font)[1] for l in wrapped_lines]
+            total_text_h = sum(line_heights) + (24 * (len(wrapped_lines) - 1))
+            current_y = (height - total_text_h) / 2
+
+            text_color = (255, 255, 255, text_alpha)
+            for line in wrapped_lines:
+                bbox = draw_text.textbbox((0, 0), line, font=current_font)
+                text_w = bbox[2] - bbox[0]
+                current_x = (width - text_w) / 2
+                draw_text.text((current_x, current_y), line, fill=text_color, font=current_font)
+                current_y += (bbox[3] - bbox[1]) + 24
+
+            canvas = Image.alpha_composite(canvas, text_layer)
+
+            # Barra de progrés superior
+            bar_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+            draw_bar = ImageDraw.Draw(bar_layer)
+            bar_margin_x = 100
+            bar_y = 120
+            bar_height = 12
+            max_bar_w = width - (bar_margin_x * 2)
+
+            # Track translúcid de fons (sempre visible)
+            draw_bar.rounded_rectangle(
+                [(bar_margin_x, bar_y), (bar_margin_x + max_bar_w, bar_y + bar_height)],
+                radius=6,
+                fill=(255, 255, 255, 70)
+            )
+
+            # Barra blanca que s'omple i després fa fade out
+            current_w = int(max_bar_w * progress)
+            if current_w > 6 and bar_fill_alpha > 0:
+                draw_bar.rounded_rectangle(
+                    [(bar_margin_x, bar_y), (bar_margin_x + current_w, bar_y + bar_height)],
+                    radius=6,
+                    fill=(255, 255, 255, bar_fill_alpha)
+                )
+
+            final_frame = Image.alpha_composite(canvas, bar_layer)
+            all_frames.append(np.array(final_frame.convert('RGB')))
+
+    # Creació de la seqüència amb el mètode del teu projecte funcional (ImageSequenceClip)
+    clip = ImageSequenceClip(all_frames, fps=fps)
+    total_duration = clip.duration
 
     # ========================================================
-    # SANEJAMENT D'ÀUDIO INTEGRAT I DIRECTE
+    # SELECCIÓ I SANEJAMENT D'ÀUDIO
     # ========================================================
     music_file = None
     music_filename = "Cap cançó trobada ⚠️"
@@ -551,62 +547,48 @@ def main():
 
         if valid_tracks:
             chosen_track = random.choice(valid_tracks)
-            
-            # SANEJAR EL FITXER TRIA AMB FFMPEG DIRECTE
             if clean_and_normalize_audio(chosen_track, clean_audio_path):
                 music_file = clean_audio_path
                 music_filename = os.path.basename(chosen_track)
-                print(f"🎵 Àudio sanejat perfectament a clean_music.mp3 (Procedent de: {music_filename})")
+                print(f"🎵 Àudio sanejat perfectament a clean_music.mp3")
             else:
-                print("❌ Ha fallat el sanejament de la cançó, es provarà de carregar l'original...")
                 music_file = chosen_track
                 music_filename = os.path.basename(chosen_track) + " (Original sense sanejar)"
         else:
-            music_filename = "Cap cançó és vàlida (comprova els arxius o Git LFS)"
+            music_filename = "Cap cançó és un fitxer d'àudio vàlid (comprova Git LFS)"
 
+    # Associar el so exactament com en el teu projecte funcional (CompositeAudioClip)
     if music_file:
         try:
-            audio_clip = AudioFileClip(music_file)
-            subclip_fn = getattr(audio_clip, "subclip", getattr(audio_clip, "subclipped", None))
+            audio = AudioFileClip(music_file)
+            audio_dur = audio.duration
+            audio = audio.subclip(0, min(total_duration, audio_dur))
 
-            if audio_clip.duration < total_duration:
-                n_loops = int(np.ceil(total_duration / audio_clip.duration))
-                audio_clip = concatenate_audioclips([audio_clip] * n_loops)
-                if subclip_fn:
-                    audio_clip = subclip_fn(0, total_duration)
-            else:
-                if subclip_fn:
-                    audio_clip = subclip_fn(0, total_duration)
+            # Fade-in i fade-out suaus
+            if hasattr(audio, "audio_fadein") and hasattr(audio, "audio_fadeout"):
+                audio = audio.audio_fadein(1.0).audio_fadeout(2.0)
 
-            if hasattr(audio_clip, "audio_fadein") and hasattr(audio_clip, "audio_fadeout"):
-                audio_clip = audio_clip.audio_fadein(1.0).audio_fadeout(2.0)
-
-            if hasattr(audio_clip, "volumex"):
-                audio_clip = audio_clip.volumex(1.0)
-
-            final_video.audio = audio_clip
-            print("🔊 Àudio final enllaçat correctament a final_video!")
+            # COMPOSITEAUDIOClIP: El mètode que activa els canals de so per FFmpeg
+            clip = clip.set_audio(CompositeAudioClip([audio.set_start(0)]).set_duration(total_duration))
+            print("🔊 Àudio muntat amb èxit gràcies a CompositeAudioClip!")
         except Exception as e:
-            print(f"❌ Error carregant l'àudio a MoviePy: {e}")
-            music_filename += f" (Error final: {e})"
+            print(f"❌ Error acoblant l'àudio amb CompositeAudioClip: {e}")
+            music_filename += f" (Error: {e})"
 
     output_filename = os.path.join(PUBLIC_VIDEOS_DIR, f"{video_id}.mp4")
-    print(f"🎥 Renderitzant vídeo MP4 final amb àudio integrat i transicions ({total_duration}s)...")
+    print(f"🎥 Renderitzant vídeo MP4 final amb ImageSequenceClip ({total_duration}s)...")
     
-    # Exportació MP4 amb àudio forçat i intermediate mp3
-    final_video.write_videofile(
+    # Exportació idèntica al teu projecte funcional
+    clip.write_videofile(
         output_filename,
-        fps=fps,
         codec='libx264',
         audio_codec='aac',
-        temp_audiofile='temp-audio.mp3',
-        remove_temp=True,
-        audio=True,
-        preset='fast',
-        threads=4
+        fps=fps,
+        preset='medium',
+        logger=None
     )
 
-    print("✅ Vídeo MP4 generat amb èxit!")
+    print("✅ Vídeo MP4 renderitzat amb èxit!")
 
     hashtag_pool = ['#formfriends', '#couples', '#relationshipquestions', '#deepconversations', '#coupleschallenge', '#questionsforcouples']
     tags_string = " ".join(random.sample(hashtag_pool, 4))
@@ -622,9 +604,9 @@ def main():
             f"📖 <b>Portada:</b> {title_text}\n"
             f"🎵 <b>Música utilitzada:</b> {music_filename}\n"
             f"🏷️ <b>Hashtags:</b> {tags_string}\n\n"
-            f"<i>Nota: Obre el vídeo a pantalla completa a Telegram i recorda activar l'altaveu si no se sent de fons!</i>"
+            f"<i>Nota: Recorda provar el vídeo un cop rebut. El so ara ha de funcionar completament!</i>"
         )
-        print("📲 Mode Prova: Enviant vídeo a Telegram per a la teva demana...")
+        print("📲 Mode Prova: Enviant vídeo a Telegram per a la teva revisió...")
         send_telegram_video_notification(telegram_msg, output_filename)
 
         rows[current_row_idx][status_col_idx] = 'Done'
