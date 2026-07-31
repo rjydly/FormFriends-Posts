@@ -164,7 +164,7 @@ def get_public_video_url(file_path):
     raise Exception("❌ No s'ha pogut obtenir cap URL pública per al vídeo.")
 
 
-def post_video_to_buffer(token, video_url, caption):
+def post_video_to_buffer(token, video_url, caption, video_title="Video Title"):
     buffer_url = "https://api.buffer.com"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -249,11 +249,25 @@ def post_video_to_buffer(token, video_url, caption):
             "assets": assets
         }
 
+        # Metadades per a Instagram Reels
         if "instagram" in service_name:
             channel_input["metadata"] = {
                 "instagram": {
                     "type": "reel",
                     "shouldShareToFeed": True
+                }
+            }
+
+        # NOU: Metadades per a YouTube (Shorts) per evitar l'error de títol buit
+        elif "youtube" in service_name:
+            clean_title = video_title
+            if len(clean_title) > 95:
+                clean_title = clean_title[:92] + "..."
+            
+            channel_input["metadata"] = {
+                "youtube": {
+                    "title": clean_title,
+                    "privacy": "public"
                 }
             }
 
@@ -522,7 +536,7 @@ def main():
             final_frame = Image.alpha_composite(canvas, bar_layer)
             all_frames.append(np.array(final_frame.convert('RGB')))
 
-    # Creació de la seqüència amb el mètode del teu projecte funcional (ImageSequenceClip)
+    # Creació de la seqüència (ImageSequenceClip)
     clip = ImageSequenceClip(all_frames, fps=fps)
     total_duration = clip.duration
 
@@ -627,7 +641,13 @@ def main():
         public_video_url = get_public_video_url(output_filename)
 
         print("📤 Enviant el vídeo a Buffer (Instagram Reels, TikTok & YouTube Shorts)...")
-        success = post_video_to_buffer(BUFFER_ACCESS_TOKEN, public_video_url, caption)
+        # NOU: Passem el títol extret del CSV com a quart argument per a YouTube
+        success = post_video_to_buffer(
+            BUFFER_ACCESS_TOKEN, 
+            public_video_url, 
+            caption, 
+            video_data.get('Slide_1_Title', 'Video Title')
+        )
 
         if success:
             title_text = html.escape(video_data.get('Slide_1_Title', ''))
