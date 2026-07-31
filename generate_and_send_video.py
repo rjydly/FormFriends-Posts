@@ -296,7 +296,6 @@ def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, heade
     trans_duration = 0.5  # Durada de la transició (0.5s)
 
     def make_frame(t):
-        # 1. Càlcul de la fusió de color de fons (Merge)
         t_trans_start = duration - trans_duration
         if t < t_trans_start:
             bg_rgb = hex_to_rgb(current_bg_hex)
@@ -304,24 +303,23 @@ def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, heade
             text_alpha = min(255, int(255 * (t / trans_duration)))  # Fade-in inicial del text
             bar_fill_alpha = 255
         else:
-            # Durant els últims 0.5s (Transició)
             k = (t - t_trans_start) / trans_duration
             k = min(1.0, max(0.0, k))
 
-            # Barreja progressiva cap al següent color de fons (Merge)
+            # Fusió cromàtica cap al següent color
             bg_rgb = interpolate_color(current_bg_hex, next_bg_hex, k)
 
             # Fade-out del text de la frase
             text_alpha = int(255 * (1.0 - k))
 
-            # Barra de progrés al 100%, però la barra blanca fa Fade-Out
+            # Barra al 100%, però la barra blanca fa Fade-Out
             progress = 1.0
             bar_fill_alpha = int(255 * (1.0 - k))
 
-        # 2. Creació del fons amb el color fusionat
+        # 1. Fons fusionat
         bg = Image.new('RGBA', (width, height), color=bg_rgb)
 
-        # 3. Dibuix de la targeta translúcida central (estàtica)
+        # 2. Targeta central translúcida (estàtica)
         card_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw_card = ImageDraw.Draw(card_layer)
         draw_card.rounded_rectangle(
@@ -330,7 +328,7 @@ def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, heade
         )
         canvas = Image.alpha_composite(bg, card_layer)
 
-        # 4. Capçalera superior i Logo (estàtics)
+        # 3. Capçalera i Logo (estàtics)
         header_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw_header = ImageDraw.Draw(header_layer)
         bbox_h = draw_header.textbbox((0, 0), header_text, font=font_title)
@@ -344,7 +342,7 @@ def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, heade
 
         canvas = Image.alpha_composite(canvas, header_layer)
 
-        # 5. Text principal de la pregunta (amb Fade-In / Fade-Out d'opacitat)
+        # 4. Text principal de la frase (amb Fade-In / Fade-Out)
         text_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw_text = ImageDraw.Draw(text_layer)
         current_font = font_title if is_title else font_text
@@ -365,7 +363,7 @@ def render_animated_slide_clip(width, height, current_bg_hex, next_bg_hex, heade
 
         canvas = Image.alpha_composite(canvas, text_layer)
 
-        # 6. Dibuix de la barra de progrés
+        # 5. Barra de progrés superior
         bar_layer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw_bar = ImageDraw.Draw(bar_layer)
 
@@ -484,13 +482,12 @@ def main():
         except Exception:
             pass
 
-    # Generació de clips amb fons "Merge", text fade i barra branca animada
+    # Generació de clips amb fons "Merge", text fade i barra blanca animada
     video_clips = []
     fps = 24
 
     for i, slide in enumerate(slides):
         current_bg_hex = slide_colors[i]
-        # El següent color per a la fusió (si és l'última slide, manté el mateix color)
         next_bg_hex = slide_colors[i+1] if i < len(slides) - 1 else slide_colors[i]
 
         header_text = "FormFriends"
@@ -509,7 +506,7 @@ def main():
     final_video = concatenate_videoclips(video_clips)
     total_duration = final_video.duration
 
-    # Selecció aleatòria de música de la carpeta music/
+    # Selecció i processament de la música de fons de la carpeta music/
     music_file = None
     if os.path.exists(MUSIC_DIR):
         possible_tracks = [os.path.join(MUSIC_DIR, f) for f in os.listdir(MUSIC_DIR) if f.lower().endswith(('.mp3', '.m4a', '.wav'))]
@@ -534,20 +531,30 @@ def main():
             if hasattr(audio, "audio_fadein") and hasattr(audio, "audio_fadeout"):
                 audio = audio.audio_fadein(1.0).audio_fadeout(2.0)
 
+            # Volum normalitzat al 100%
+            if hasattr(audio, "volumex"):
+                audio = audio.volumex(1.0)
+
             if hasattr(final_video, "set_audio"):
                 final_video = final_video.set_audio(audio)
             elif hasattr(final_video, "with_audio"):
                 final_video = final_video.with_audio(audio)
+            print("🔊 Àudio enllaçat correctament al vídeo MP4!")
         except Exception as e:
             print(f"⚠️ Warning: No s'ha pogut afegir l'àudio: {e}")
 
     output_filename = os.path.join(PUBLIC_VIDEOS_DIR, f"{video_id}.mp4")
-    print(f"🎥 Renderitzant vídeo MP4 final amb efectes de merge, text fade i barra fluida ({total_duration}s)...")
+    print(f"🎥 Renderitzant vídeo MP4 final amb àudio i transicions ({total_duration}s)...")
+    
+    # Exportació MP4 amb àudio forçat via temp_audiofile per entorns Linux/GitHub Actions
     final_video.write_videofile(
         output_filename,
         fps=fps,
         codec='libx264',
         audio_codec='aac',
+        temp_audiofile='temp-audio.m4a',
+        remove_temp=True,
+        audio=True,
         preset='fast',
         threads=4
     )
