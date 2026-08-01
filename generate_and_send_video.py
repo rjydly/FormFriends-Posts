@@ -14,7 +14,7 @@ from moviepy.editor import ImageSequenceClip, AudioFileClip, CompositeAudioClip,
 # ========================================================
 # CONFIGURACIÓ I RUTES
 # ========================================================
-TEST_MODE = True  # Canvia a False quan vulguis publicar a xarxes socials (Buffer)
+TEST_MODE = False  # Canvia a False quan vulguis publicar a xarxes socials (Buffer)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(BASE_DIR, 'video_posts.csv')
